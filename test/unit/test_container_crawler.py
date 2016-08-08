@@ -35,6 +35,31 @@ class TestContainerCrawler(unittest.TestCase):
                 self.assertEqual(expected,
                                  mock_handler.handle.call_args_list)
 
+    def test_bulk_handling(self):
+        self.crawler.bulk = True
+
+        total_rows = 20
+        items = [{'ROWID': x} for x in range(0, total_rows)]
+        mock_handler = mock.Mock()
+        self.crawler.handler_class = mock.Mock()
+        mock_handler.handle.return_value = []
+        self.crawler.handler_class.return_value = mock_handler
+        self.crawler.process_items(mock_handler, items, 1, 0)
+        expected = [mock.call([{'ROWID': x} for x in range(0, total_rows)]),
+                    mock.call([])
+                   ]
+        self.assertEqual(expected, mock_handler.handle.call_args_list)
+
+    def test_bulk_errors(self):
+        self.mock_ring.get_nodes.return_value = ['part', []]
+        self.crawler.bulk = True
+
+        mock_handler = mock.Mock()
+        mock_handler.handle.return_value = [RuntimeError('error')]
+
+        with self.assertRaises(RuntimeError):
+            self.crawler.process_items(mock_handler, [], 1, 0)
+
     def test_failed_handler_class_constructor(self):
         self.mock_ring.get_nodes.return_value = ['part', []]
 

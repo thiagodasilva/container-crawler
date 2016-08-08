@@ -15,6 +15,7 @@ class ContainerCrawler(object):
         self.logger = logging.getLogger('container-crawler')
         self.conf = conf
         self.root = conf['devices']
+        self.bulk = conf.get('bulk_process', False)
         self.interval = 10
         self.swift_dir = '/etc/swift'
         self.container_ring = Ring(self.swift_dir, ring_name='container')
@@ -34,37 +35,33 @@ class ContainerCrawler(object):
                                db_hash + '.db')
         return ContainerBroker(db_path, account=account, container=container)
 
-    # TODO: use green threads here
-    def process_items(self, handler, rows, nodes_count, node_id):
-        errors = False
+    def submit_items(self, handler, rows):
+        if self.bulk:
+            return handler.handle(rows)
+
+        errors = []
         for row in rows:
-            if (row['ROWID'] % nodes_count) != node_id:
-                continue
+            # TODO: use green threads here
             if self.logger:
-                self.logger.debug('propagating %s' % row['ROWID'])
+                self.logger.debug('handling row %s' % row['ROWID'])
             try:
                 handler.handle(row)
             except Exception as e:
                 self.logger.error('Failed to handle row %s: %s' % (
                     row['ROWID'], repr(e)))
-                errors = True
-        if errors:
-            raise RuntimeError('Failed to scan %s' % (str(handler)))
+                errors.append((row, e))
+        return errors
 
-        for row in rows:
-            # Validate the changes from other rows
-            if (row['ROWID'] % nodes_count) == node_id:
-                continue
-            if self.logger:
-                self.logger.debug('verifiying %s' % row['ROWID'])
-            try:
-                handler.handle(row)
-            except Exception as e:
-                self.logger.error('Failed to verify row %s: %s' % (
-                    row['ROWID'], repr(e)))
-                errors = True
-        if errors:
-            raise RuntimeError('Failed to verify %s' % (str(handler)))
+    def process_items(self, handler, rows, nodes_count, node_id):
+        owned_rows = filter(
+            lambda row: row['ROWID'] % nodes_count == node_id, rows)
+        if self.submit_items(handler, owned_rows):
+            raise RuntimeError('Failed to process rows')
+
+        verified_rows = filter(
+            lambda row: row['ROWID'] % nodes_count != node_id, rows)
+        if self.submit_items(handler, verified_rows):
+            raise RuntimeError('Failed to verify rows')
 
     def handle_container(self, settings):
         part, container_nodes = self.container_ring.get_nodes(
