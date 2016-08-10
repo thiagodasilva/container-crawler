@@ -1,4 +1,3 @@
-import logging
 import os.path
 import time
 import traceback
@@ -11,8 +10,8 @@ from swift.container.backend import DATADIR, ContainerBroker
 
 
 class ContainerCrawler(object):
-    def __init__(self, conf, handler_class):
-        self.logger = logging.getLogger('container-crawler')
+    def __init__(self, conf, handler_class, logger=None):
+        self.logger = logger
         self.conf = conf
         self.root = conf['devices']
         self.bulk = conf.get('bulk_process', False)
@@ -26,7 +25,8 @@ class ContainerCrawler(object):
         self.poll_interval = conf.get('poll_interval', 5)
         self.handler_class = handler_class
 
-        self.logger.debug('Created the Container Crawler instance')
+        if self.logger:
+            self.logger.debug('Created the Container Crawler instance')
 
     def get_broker(self, account, container, part, node):
         db_hash = hash_path(account, container)
@@ -47,8 +47,9 @@ class ContainerCrawler(object):
             try:
                 handler.handle(row)
             except Exception as e:
-                self.logger.error('Failed to handle row %s: %s' % (
-                    row['ROWID'], repr(e)))
+                if self.logger:
+                    self.logger.error('Failed to handle row %s: %s' % (
+                        row['ROWID'], repr(e)))
                 errors.append((row, e))
         return errors
 
@@ -84,7 +85,7 @@ class ContainerCrawler(object):
             except DatabaseConnectionError:
                 continue
             if items:
-                self.process_items(settings, items, nodes_count, index)
+                self.process_items(handler, items, nodes_count, index)
                 handler.save_last_row(items[-1]['ROWID'])
             return
 
@@ -93,7 +94,8 @@ class ContainerCrawler(object):
         # no containers configured
         if 'containers' not in self.conf or not self.conf['containers']:
             return
-        self.logger.debug('Entering the poll loop')
+        if self.logger:
+            self.logger.debug('Entering the poll loop')
         while True:
             start = time.time()
             self.run_once()
@@ -108,7 +110,8 @@ class ContainerCrawler(object):
             except Exception as e:
                 account = container_settings.get('account', 'N/A')
                 container = container_settings.get('container', 'N/A')
-                self.logger.error("Failed to process %s/%s with %s: %s" %
-                                  (account, container, self.handler_class,
-                                   repr(e)))
-                self.logger.error(traceback.format_exc(e))
+                if self.logger:
+                    self.logger.error("Failed to process %s/%s with %s: %s" %
+                                      (account, container, self.handler_class,
+                                       repr(e)))
+                    self.logger.error(traceback.format_exc(e))
