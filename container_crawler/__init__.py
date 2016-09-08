@@ -25,8 +25,12 @@ class ContainerCrawler(object):
         self.poll_interval = conf.get('poll_interval', 5)
         self.handler_class = handler_class
 
-        if self.logger:
-            self.logger.debug('Created the Container Crawler instance')
+        self.log('debug', 'Created the Container Crawler instance')
+
+    def log(self, level, message):
+        if not self.logger:
+            return
+        getattr(self.logger, level)(message)
 
     def get_broker(self, account, container, part, node):
         db_hash = hash_path(account, container)
@@ -42,14 +46,12 @@ class ContainerCrawler(object):
         errors = []
         for row in rows:
             # TODO: use green threads here
-            if self.logger:
-                self.logger.debug('handling row %s' % row['ROWID'])
+            self.log('debug', 'handling row %s' % row['ROWID'])
             try:
                 handler.handle(row)
             except Exception as e:
-                if self.logger:
-                    self.logger.error('Failed to handle row %s: %s' % (
-                        row['ROWID'], repr(e)))
+                self.log('error', 'Failed to handle row %s: %s' % (
+                    row['ROWID'], repr(e)))
                 errors.append((row, e))
         return errors
 
@@ -94,8 +96,7 @@ class ContainerCrawler(object):
         # no containers configured
         if 'containers' not in self.conf or not self.conf['containers']:
             return
-        if self.logger:
-            self.logger.debug('Entering the poll loop')
+        self.log('debug', 'Entering the poll loop')
         while True:
             start = time.time()
             self.run_once()
@@ -110,8 +111,6 @@ class ContainerCrawler(object):
             except Exception as e:
                 account = container_settings.get('account', 'N/A')
                 container = container_settings.get('container', 'N/A')
-                if self.logger:
-                    self.logger.error("Failed to process %s/%s with %s: %s" %
-                                      (account, container, self.handler_class,
-                                       repr(e)))
-                    self.logger.error(traceback.format_exc(e))
+                self.log('error', "Failed to process %s/%s with %s: %s" % (
+                    account, container, self.handler_class, repr(e)))
+                self.log('error', traceback.format_exc(e))
