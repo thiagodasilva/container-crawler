@@ -1,3 +1,6 @@
+import eventlet
+eventlet.patcher.monkey_patch(all=True)
+
 import os.path
 import time
 import traceback
@@ -25,7 +28,49 @@ class ContainerCrawler(object):
         self.poll_interval = conf.get('poll_interval', 5)
         self.handler_class = handler_class
 
+        if not self.bulk:
+            self._init_workers(conf)
+
         self.log('debug', 'Created the Container Crawler instance')
+
+    def _init_workers(self, conf):
+        self.workers = conf.get('workers', 10)
+        self.pool = eventlet.GreenPool(self.workers)
+        self.work_queue = eventlet.queue.Queue(self.workers * 2)
+
+        # max_size=None means a Queue is infinite
+        self.error_queue = eventlet.queue.Queue(maxsize=None)
+        self.stats_queue = eventlet.queue.Queue(maxsize=None)
+        for _ in range(0, self.workers):
+            self.pool.spawn_n(self._worker)
+
+    def _worker(self):
+        while 1:
+            work = self.work_queue.get()
+            if not work:
+                self.work_queue.task_done()
+                break
+            row, handler = work
+            try:
+                handler.handle(row)
+            except Exception as e:
+                self.error_queue.put((row, e))
+            self.work_queue.task_done()
+
+    def _stop(self):
+        for _ in range(0, self.workers):
+            self.work_queue.put(None)
+        self.pool.waitall()
+
+    def _check_errors(self):
+        if self.error_queue.empty():
+            return
+
+        while not self.error_queue.empty():
+            row, error = self.error_queue.get()
+            self.log('error', 'Failed to handle row %s: %r' % (
+                row['ROWID'], error))
+        raise RuntimeError('Failed to process rows')
 
     def log(self, level, message):
         if not self.logger:
@@ -41,30 +86,22 @@ class ContainerCrawler(object):
 
     def submit_items(self, handler, rows):
         if self.bulk:
-            return handler.handle(rows)
+            handler.handle(rows)
+            return
 
-        errors = []
         for row in rows:
-            # TODO: use green threads here
-            self.log('debug', 'handling row %s' % row['ROWID'])
-            try:
-                handler.handle(row)
-            except Exception as e:
-                self.log('error', 'Failed to handle row %s: %s' % (
-                    row['ROWID'], repr(e)))
-                errors.append((row, e))
-        return errors
+            self.work_queue.put((row, handler))
+        self.work_queue.join()
+        self._check_errors()
 
     def process_items(self, handler, rows, nodes_count, node_id):
         owned_rows = filter(
             lambda row: row['ROWID'] % nodes_count == node_id, rows)
-        if self.submit_items(handler, owned_rows):
-            raise RuntimeError('Failed to process rows')
+        self.submit_items(handler, owned_rows)
 
         verified_rows = filter(
             lambda row: row['ROWID'] % nodes_count != node_id, rows)
-        if self.submit_items(handler, verified_rows):
-            raise RuntimeError('Failed to verify rows')
+        self.submit_items(handler, verified_rows)
 
     def handle_container(self, settings):
         part, container_nodes = self.container_ring.get_nodes(

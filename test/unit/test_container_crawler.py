@@ -55,7 +55,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.bulk = True
 
         mock_handler = mock.Mock()
-        mock_handler.handle.return_value = [RuntimeError('error')]
+        mock_handler.handle.side_effect = RuntimeError('error')
 
         with self.assertRaises(RuntimeError):
             self.crawler.process_items(mock_handler, [], 1, 0)
