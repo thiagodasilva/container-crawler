@@ -113,19 +113,20 @@ class ContainerCrawler(object):
             if not is_local_device(self.myips, None, node['ip'],
                                    node['port']):
                 continue
-            last_row = handler.get_last_row()
-            if not last_row:
-                last_row = 0
             broker = self.get_broker(settings['account'],
                                      settings['container'],
                                      part, node)
+            broker_info = broker.get_info()
+            last_row = handler.get_last_row(broker_info['id'])
+            if not last_row:
+                last_row = 0
             try:
                 items = broker.get_items_since(last_row, self.items_chunk)
             except DatabaseConnectionError:
                 continue
             if items:
                 self.process_items(handler, items, nodes_count, index)
-                handler.save_last_row(items[-1]['ROWID'])
+                handler.save_last_row(items[-1]['ROWID'], broker_info['id'])
             return
 
     def run_always(self):
