@@ -5,12 +5,16 @@ import unittest
 
 class TestContainerCrawler(unittest.TestCase):
 
+    @mock.patch('container_crawler.InternalClient')
     @mock.patch('container_crawler.Ring')
-    def setUp(self, mock_ring):
+    def setUp(self, mock_ring, mock_ic):
         self.mock_ring = mock.Mock()
         mock_ring.return_value = self.mock_ring
         self.mock_handler = mock.Mock()
         self.mock_handler.__name__ = 'MockHandler'
+
+        self.mock_ic = mock.Mock()
+        mock_ic.return_value = self.mock_ic
 
         self.conf = {'devices': '/devices',
                      'items_chunk': 1000,
@@ -33,8 +37,10 @@ class TestContainerCrawler(unittest.TestCase):
                                       range(0, total_rows))
 
                 self.crawler.process_items(mock_handler, items, nodes, node_id)
-                expected = [mock.call({'ROWID': x}) for x in handle_calls]
-                expected += [mock.call({'ROWID': x}) for x in verify_calls]
+                expected = [mock.call({'ROWID': x}, self.mock_ic)
+                            for x in handle_calls]
+                expected += [mock.call({'ROWID': x}, self.mock_ic)
+                             for x in verify_calls]
                 self.assertEqual(expected,
                                  mock_handler.handle.call_args_list)
 
@@ -48,8 +54,8 @@ class TestContainerCrawler(unittest.TestCase):
         mock_handler.handle.return_value = []
         self.crawler.handler_class.return_value = mock_handler
         self.crawler.process_items(mock_handler, items, 1, 0)
-        expected = [mock.call([{'ROWID': x} for x in range(0, total_rows)]),
-                    mock.call([])]
+        expected = [mock.call([{'ROWID': x} for x in range(0, total_rows)],
+                    self.mock_ic)]
         self.assertEqual(expected, mock_handler.handle.call_args_list)
 
     def test_bulk_errors(self):
@@ -89,8 +95,8 @@ class TestContainerCrawler(unittest.TestCase):
 
             handle_calls = filter(lambda x: x % 2 == node_id,
                                   range(0, rows))
-            expected = [mock.call({'ROWID': row_id, 'name': str(row_id)})
-                        for row_id in handle_calls]
+            expected = [mock.call({'ROWID': row_id, 'name': str(row_id)},
+                                  self.mock_ic) for row_id in handle_calls]
             self.assertEqual(expected,
                              mock_handler.handle.call_args_list)
 
@@ -103,7 +109,7 @@ class TestContainerCrawler(unittest.TestCase):
             mock_handler.handle.side_effect = RuntimeError('oops')
 
             # only fail the verify calls
-            def fail_verify(row):
+            def fail_verify(row, client):
                 if row['ROWID'] % 2 != node_id:
                     raise RuntimeError('oops')
                 return
@@ -115,10 +121,10 @@ class TestContainerCrawler(unittest.TestCase):
 
             handle_calls = filter(lambda x: x % 2 == node_id, range(0, rows))
             verify_calls = filter(lambda x: x % 2 != node_id, range(0, rows))
-            expected = [mock.call({'ROWID': row_id, 'name': str(row_id)})
-                        for row_id in handle_calls]
-            expected += [mock.call({'ROWID': row_id, 'name': str(row_id)})
-                         for row_id in verify_calls]
+            expected = [mock.call({'ROWID': row_id, 'name': str(row_id)},
+                                  self.mock_ic) for row_id in handle_calls]
+            expected += [mock.call({'ROWID': row_id, 'name': str(row_id)},
+                                   self.mock_ic) for row_id in verify_calls]
             self.assertEqual(expected,
                              mock_handler.handle.call_args_list)
 

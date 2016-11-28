@@ -1,4 +1,5 @@
 import eventlet
+import eventlet.pools
 eventlet.patcher.monkey_patch(all=True)
 
 import os.path
@@ -7,12 +8,34 @@ import traceback
 
 from swift.common.db import DatabaseConnectionError
 from swift.common.ring import Ring
+from swift.common.internal_client import InternalClient
 from swift.common.ring.utils import is_local_device
 from swift.common.utils import whataremyips, hash_path, storage_directory
+from swift.common.wsgi import ConfigString
+
 from swift.container.backend import DATADIR, ContainerBroker
 
 
 class ContainerCrawler(object):
+    # TODO: pick up the IC configuration from /etc/swift
+    INTERNAL_CLIENT_CONFIG = """
+[DEFAULT]
+[pipeline:main]
+pipeline = catch_errors proxy-logging cache proxy-server
+
+[app:proxy-server]
+use = egg:swift#proxy
+
+[filter:cache]
+use = egg:swift#memcache
+
+[filter:proxy-logging]
+use = egg:swift#proxy_logging
+
+[filter:catch_errors]
+use = egg:swift#catch_errors
+""".lstrip()
+
     def __init__(self, conf, handler_class, logger=None):
         if not handler_class:
             raise RuntimeError('Handler class must be defined')
@@ -33,6 +56,7 @@ class ContainerCrawler(object):
 
         if not self.bulk:
             self._init_workers(conf)
+        self._init_ic_pool(conf)
 
         self.log('debug', 'Created the Container Crawler instance')
 
@@ -46,6 +70,16 @@ class ContainerCrawler(object):
         self.stats_queue = eventlet.queue.Queue(maxsize=None)
         for _ in range(0, self.workers):
             self.pool.spawn_n(self._worker)
+
+    def _init_ic_pool(self, conf):
+        ic_config = ConfigString(conf.get('internal_client_config',
+                                          self.INTERNAL_CLIENT_CONFIG))
+        ic_name = conf.get('internal_client_logname', 'ContainerCrawler')
+        pool_size = conf.get('workers', 1)
+        self._swift_pool = eventlet.pools.Pool(
+            create=lambda: InternalClient(ic_config, ic_name, 3),
+            min_size=pool_size,
+            max_size=pool_size)
 
     def _worker(self):
         while 1:
@@ -61,14 +95,15 @@ class ContainerCrawler(object):
             try:
                 if work:
                     row, handler = work
-                    handler.handle(row)
+                    with self._swift_pool.item() as swift_client:
+                        handler.handle(row, swift_client)
             except:
                 self.error_queue.put((row, traceback.format_exc()))
             finally:
                 self.work_queue.task_done()
 
     def _stop(self):
-        for _ in range(0, self.workers):
+        for _ in xrange(self.workers):
             self.work_queue.put(None)
         self.pool.waitall()
 
@@ -96,7 +131,8 @@ class ContainerCrawler(object):
 
     def submit_items(self, handler, rows):
         if self.bulk:
-            handler.handle(rows)
+            with self._swift_pool.item() as swift_client:
+                handler.handle(rows, swift_client)
             return
 
         for row in rows:
@@ -111,7 +147,8 @@ class ContainerCrawler(object):
 
         verified_rows = filter(
             lambda row: row['ROWID'] % nodes_count != node_id, rows)
-        self.submit_items(handler, verified_rows)
+        if verified_rows:
+            self.submit_items(handler, verified_rows)
 
     def handle_container(self, settings):
         part, container_nodes = self.container_ring.get_nodes(
