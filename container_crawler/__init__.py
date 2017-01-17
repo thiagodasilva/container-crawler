@@ -68,8 +68,8 @@ class ContainerCrawler(object):
 
         while not self.error_queue.empty():
             row, error = self.error_queue.get()
-            self.log('error', 'Failed to handle row %s: %r' % (
-                row['ROWID'], error))
+            self.log('error', 'Failed to handle row %s (%s): %r' % (
+                row['ROWID'], row['name'], error))
         raise RuntimeError('Failed to process rows')
 
     def log(self, level, message):
