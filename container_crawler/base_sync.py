@@ -4,13 +4,13 @@ from swift.common.internal_client import InternalClient
 from swift.common.wsgi import ConfigString
 
 
-"""
+class BaseSync(object):
+    """
     Base class for all classes that implement the sync functionality. Sets up
     the swift client with the default configuration, which points to the local
     Swift configuration. Supplies the skeleton methods that must be overwritten
     by all child classes.
-"""
-class BaseSync(object):
+    """
 
     INTERNAL_CLIENT_CONFIG = """
 [DEFAULT]
@@ -38,7 +38,8 @@ use = egg:swift#catch_errors
         self._swift_client = InternalClient(ic_config, 'Metadata sync', 3)
         self._status_file = os.path.join(self._status_dir, self._account,
                                          self._container)
-        self._status_account_dir = os.path.join(self._status_dir, self._account)
+        self._status_account_dir = os.path.join(self._status_dir,
+                                                self._account)
 
     def handle(self, rows):
         raise NotImplementedError

@@ -9,11 +9,14 @@ class TestContainerCrawler(unittest.TestCase):
     def setUp(self, mock_ring):
         self.mock_ring = mock.Mock()
         mock_ring.return_value = self.mock_ring
+        self.mock_handler = mock.Mock()
+        self.mock_handler.__name__ = 'MockHandler'
 
         self.conf = {'devices': '/devices',
                      'items_chunk': 1000,
                      'status_dir': '/var/scratch'}
-        self.crawler = container_crawler.ContainerCrawler(self.conf, None)
+        self.crawler = container_crawler.ContainerCrawler(
+            self.conf, self.mock_handler)
 
     def test_process_items(self):
         total_rows = 20
@@ -46,8 +49,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.handler_class.return_value = mock_handler
         self.crawler.process_items(mock_handler, items, 1, 0)
         expected = [mock.call([{'ROWID': x} for x in range(0, total_rows)]),
-                    mock.call([])
-                   ]
+                    mock.call([])]
         self.assertEqual(expected, mock_handler.handle.call_args_list)
 
     def test_bulk_errors(self):
@@ -76,7 +78,7 @@ class TestContainerCrawler(unittest.TestCase):
 
     def test_process_items_errors(self):
         rows = 10
-        items = [{'ROWID': x} for x in range(0, rows)]
+        items = [{'ROWID': x, 'name': str(x)} for x in range(0, rows)]
 
         for node_id in (0, 1):
             mock_handler = mock.Mock()
@@ -87,14 +89,14 @@ class TestContainerCrawler(unittest.TestCase):
 
             handle_calls = filter(lambda x: x % 2 == node_id,
                                   range(0, rows))
-            expected = [mock.call({'ROWID': row_id})
+            expected = [mock.call({'ROWID': row_id, 'name': str(row_id)})
                         for row_id in handle_calls]
             self.assertEqual(expected,
                              mock_handler.handle.call_args_list)
 
     def test_verify_items_errors(self):
         rows = 10
-        items = [{'ROWID': x} for x in range(0, rows)]
+        items = [{'ROWID': x, 'name': str(x)} for x in range(0, rows)]
 
         for node_id in (0, 1):
             mock_handler = mock.Mock()
@@ -113,12 +115,62 @@ class TestContainerCrawler(unittest.TestCase):
 
             handle_calls = filter(lambda x: x % 2 == node_id, range(0, rows))
             verify_calls = filter(lambda x: x % 2 != node_id, range(0, rows))
-            expected = [mock.call({'ROWID': row_id})
+            expected = [mock.call({'ROWID': row_id, 'name': str(row_id)})
                         for row_id in handle_calls]
-            expected += [mock.call({'ROWID': row_id})
+            expected += [mock.call({'ROWID': row_id, 'name': str(row_id)})
                          for row_id in verify_calls]
             self.assertEqual(expected,
                              mock_handler.handle.call_args_list)
+
+    @mock.patch('container_crawler.traceback.format_exc')
+    def test_process_items_errors_unicode(self, tb_mock):
+        row = {'ROWID': 42, 'name': 'monkey-\xf0\x9f\x90\xb5'}
+        error = RuntimeError('fail')
+        mock_handler = mock.Mock()
+        mock_handler.handle.side_effect = error
+        self.crawler.logger = mock.Mock()
+        tb_mock.return_value = 'traceback'
+
+        with self.assertRaises(RuntimeError):
+            self.crawler.submit_items(mock_handler, [row])
+        self.crawler.logger.error.assert_called_once_with(
+            "Failed to handle row %d (%s): 'traceback'" % (
+                row['ROWID'], row['name'].decode('utf-8')))
+
+    @mock.patch('container_crawler.traceback.format_exc')
+    def test_worker_handles_all_exceptions(self, tb_mock):
+        mock_handler = mock.Mock()
+        mock_handler.handle.side_effect = BaseException('base error')
+        tb_mock.return_value = 'traceback'
+        self.crawler.logger = mock.Mock()
+
+        row = {'name': 'failed', 'deleted': False, 'ROWID': 1}
+
+        with self.assertRaises(RuntimeError):
+            self.crawler.submit_items(mock_handler, [row])
+        self.crawler.logger.error.assert_called_once_with(
+            "Failed to handle row %d (%s): 'traceback'" % (
+                row['ROWID'], row['name'].decode('utf-8')))
+
+    @mock.patch('container_crawler.traceback.format_exc')
+    def test_unicode_container_account_failure(self, tb_mock):
+        container = {
+            'account': 'account-\xf0\x9f\x90\xb5',
+            'container': 'container-\xf0\x9f\x90\xb5'
+        }
+        tb_mock.return_value = 'traceback'
+        self.crawler.conf['containers'] = [container]
+        self.crawler.handle_container = mock.Mock()
+        self.crawler.handle_container.side_effect = BaseException('base error')
+        self.crawler.logger = mock.Mock()
+
+        self.crawler.run_once()
+        self.crawler.logger.error.asser_has_calls(
+            mock.call('Failed to process %s/%s with %s' % (
+                container['account'].decode('utf-8'),
+                container['container'].decode('utf-8'),
+                self.crawler.handler_class.__name__)),
+            mock.call('traceback'))
 
     @mock.patch('container_crawler.time')
     def test_exit_if_no_containers(self, time_mock):
@@ -134,7 +186,6 @@ class TestContainerCrawler(unittest.TestCase):
             {'account': 'foo'}
         ]
         self.crawler.conf['containers'] = containers
-        self.crawler.handler_class = mock.Mock()
 
         self.crawler.logger = mock.Mock()
         format_exc_mock.return_value = 'traceback'
@@ -147,13 +198,11 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(expected_handle_calls,
                          self.crawler.handle_container.call_args_list)
         expected_logger_calls = [
-            mock.call("Failed to process foo/bar with %s: %s" %
-                      (str(self.crawler.handler_class),
-                       repr(self.crawler.handle_container.side_effect))),
+            mock.call("Failed to process foo/bar with %s" %
+                      (self.crawler.handler_class.__name__)),
             mock.call('traceback'),
-            mock.call("Failed to process foo/N/A with %s: %s" %
-                      (str(self.crawler.handler_class),
-                       repr(self.crawler.handle_container.side_effect))),
+            mock.call("Failed to process foo/N/A with %s" %
+                      (self.crawler.handler_class.__name__)),
             mock.call('traceback')
         ]
         self.assertEqual(expected_logger_calls,

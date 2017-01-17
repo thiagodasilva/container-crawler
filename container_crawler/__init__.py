@@ -14,6 +14,9 @@ from swift.container.backend import DATADIR, ContainerBroker
 
 class ContainerCrawler(object):
     def __init__(self, conf, handler_class, logger=None):
+        if not handler_class:
+            raise RuntimeError('Handler class must be defined')
+
         self.logger = logger
         self.conf = conf
         self.root = conf['devices']
@@ -46,16 +49,23 @@ class ContainerCrawler(object):
 
     def _worker(self):
         while 1:
-            work = self.work_queue.get()
-            if not work:
-                self.work_queue.task_done()
-                break
-            row, handler = work
             try:
-                handler.handle(row)
-            except Exception as e:
-                self.error_queue.put((row, e))
-            self.work_queue.task_done()
+                work = self.work_queue.get()
+            except:
+                self.log(
+                    'error', 'Failed to fetch items from the queue: %s' %
+                    traceback.format_exc())
+                time.sleep(100)
+                continue
+
+            try:
+                if work:
+                    row, handler = work
+                    handler.handle(row)
+            except:
+                self.error_queue.put((row, traceback.format_exc()))
+            finally:
+                self.work_queue.task_done()
 
     def _stop(self):
         for _ in range(0, self.workers):
@@ -68,8 +78,8 @@ class ContainerCrawler(object):
 
         while not self.error_queue.empty():
             row, error = self.error_queue.get()
-            self.log('error', 'Failed to handle row %s (%s): %r' % (
-                row['ROWID'], row['name'], error))
+            self.log('error', u'Failed to handle row %s (%s): %r' % (
+                row['ROWID'], row['name'].decode('utf-8'), error))
         raise RuntimeError('Failed to process rows')
 
     def log(self, level, message):
@@ -146,9 +156,10 @@ class ContainerCrawler(object):
         for container_settings in self.conf['containers']:
             try:
                 self.handle_container(container_settings)
-            except Exception as e:
+            except:
                 account = container_settings.get('account', 'N/A')
                 container = container_settings.get('container', 'N/A')
-                self.log('error', "Failed to process %s/%s with %s: %s" % (
-                    account, container, self.handler_class, repr(e)))
-                self.log('error', traceback.format_exc(e))
+                self.log('error', "Failed to process %s/%s with %s" % (
+                    account.decode('utf-8'), container.decode('utf-8'),
+                    self.handler_class.__name__))
+                self.log('error', traceback.format_exc())
