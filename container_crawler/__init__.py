@@ -68,7 +68,7 @@ use = egg:swift#catch_errors
         # max_size=None means a Queue is infinite
         self.error_queue = eventlet.queue.Queue(maxsize=None)
         self.stats_queue = eventlet.queue.Queue(maxsize=None)
-        for _ in range(0, self.workers):
+        for _ in xrange(self.workers):
             self.pool.spawn_n(self._worker)
 
     def _init_ic_pool(self, conf):
@@ -174,7 +174,29 @@ use = egg:swift#catch_errors
             if items:
                 self.process_items(handler, items, nodes_count, index)
                 handler.save_last_row(items[-1]['ROWID'], broker_info['id'])
-            return
+
+    def call_handle_container(self, settings):
+        """ Thin wrapper around the handle_container() method for error
+            handling.
+        """
+        try:
+            self.handle_container(settings)
+        except:
+            account = settings['account']
+            container = settings['container']
+            self.log('error', "Failed to process %s/%s with %s" % (
+                account.decode('utf-8'), container.decode('utf-8'),
+                self.handler_class.__name__))
+            self.log('error', traceback.format_exc())
+
+    def list_containers(self, account):
+        # TODO: we should not have to retrieve all of the containers at once,
+        # but it will require allocating a swift_client for this purpose from
+        # the pool -- consider doing that at some point. However, as long as
+        # there are fewer than a few million containers, getting all of them at
+        # once should be cheap, paginating 10000 at a time.
+        with self._swift_pool.item() as swift_client:
+            return [c['name'] for c in swift_client.iter_containers(account)]
 
     def run_always(self):
         # Since we don't support reloading, the daemon should quit if there are
@@ -191,12 +213,26 @@ use = egg:swift#catch_errors
 
     def run_once(self):
         for container_settings in self.conf['containers']:
-            try:
-                self.handle_container(container_settings)
-            except:
-                account = container_settings.get('account', 'N/A')
-                container = container_settings.get('container', 'N/A')
-                self.log('error', "Failed to process %s/%s with %s" % (
-                    account.decode('utf-8'), container.decode('utf-8'),
-                    self.handler_class.__name__))
-                self.log('error', traceback.format_exc())
+            # TODO: perform validation of the settings on startup
+            if 'container' not in container_settings:
+                self.log('error',
+                         'Container name not specified in settings -- continue')
+                continue
+            if 'account' not in container_settings:
+                self.log('error',
+                         'Account not in specified in settings -- continue')
+                continue
+
+            if container_settings['container'] ==  '/*':
+                # We allow the container to be specified as a wild card, in which
+                # case _all_ containers in the account are checked and synced if
+                # necessary. We will need to copy the dictionary and act on each
+                # container individually.
+                # TODO: figure out how to plumb the swift client in here!
+                all_containers = self.list_containers(container_settings['account'])
+                settings_copy = container_settings.copy()
+                for container in all_containers:
+                    settings_copy['container'] = container
+                    self.call_handle_container(settings_copy)
+            else:
+                self.call_handle_container(container_settings)
