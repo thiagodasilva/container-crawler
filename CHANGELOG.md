@@ -1,3 +1,16 @@
+## 0.0.3 (2017-05-05)
+
+Features:
+
+    - treat containers named "/\*" as a way to index all containers under a
+      specified account. The leading slash is chosen, as Swift does not allow
+      "/" in the container names.
+
+Improvements:
+
+    - use a pool of Swift InternalClient objects (as opposed to instantiating
+      one on every crawl)
+
 ## 0.0.2 (2017-02-28)
 
 Bug fixes:
