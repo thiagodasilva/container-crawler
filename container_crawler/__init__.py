@@ -215,24 +215,43 @@ use = egg:swift#catch_errors
         for container_settings in self.conf['containers']:
             # TODO: perform validation of the settings on startup
             if 'container' not in container_settings:
-                self.log('error',
-                         'Container name not specified in settings -- continue')
+                self.log(
+                    'error',
+                    'Container name not specified in settings -- continue')
                 continue
             if 'account' not in container_settings:
-                self.log('error',
-                         'Account not in specified in settings -- continue')
+                self.log(
+                    'error',
+                    'Account not in specified in settings -- continue')
                 continue
 
-            if container_settings['container'] ==  '/*':
-                # We allow the container to be specified as a wild card, in which
-                # case _all_ containers in the account are checked and synced if
-                # necessary. We will need to copy the dictionary and act on each
-                # container individually.
-                # TODO: figure out how to plumb the swift client in here!
-                all_containers = self.list_containers(container_settings['account'])
+            if container_settings['container'] == '/*':
+                all_containers = self.list_containers(
+                    container_settings['account'])
                 settings_copy = container_settings.copy()
                 for container in all_containers:
                     settings_copy['container'] = container
                     self.call_handle_container(settings_copy)
+                # After iterating over all of the containers, we prune any
+                # entries from containers that may have been deleted (so as to
+                # avoid missing data). There is still a chance where a
+                # container is removed and created between the calls to
+                # CloudSync, however there is nothing we can do about that.
+                # TODO: keep track of container creation date to detect when
+                # they are removed and then added.
+                tracked_containers = os.listdir(os.path.join(
+                    self.status_dir, container_settings['account']))
+                disappeared = set(tracked_containers) - set(all_containers)
+                for container in disappeared:
+                    try:
+                        os.unlink(os.path.join(self.status_dir,
+                                               container_settings['account'],
+                                               container))
+                    except Exception as e:
+                        self.log(
+                            'warning',
+                            'Failed to remove the status file for %s: %s' % (
+                                os.path.join(container_settings['account'],
+                                             container), repr(e)))
             else:
                 self.call_handle_container(container_settings)
