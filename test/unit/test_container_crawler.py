@@ -200,16 +200,14 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.handle_container.side_effect = RuntimeError('oops')
         self.crawler.run_once()
 
-        expected_handle_calls = [mock.call(conf) for conf in containers]
+        expected_handle_calls = [mock.call(containers[0])]
         self.assertEqual(expected_handle_calls,
                          self.crawler.handle_container.call_args_list)
         expected_logger_calls = [
             mock.call("Failed to process foo/bar with %s" %
                       (self.crawler.handler_class.__name__)),
             mock.call('traceback'),
-            mock.call("Failed to process foo/N/A with %s" %
-                      (self.crawler.handler_class.__name__)),
-            mock.call('traceback')
+            mock.call("Container name not specified in settings -- continue")
         ]
         self.assertEqual(expected_logger_calls,
                          self.crawler.logger.error.call_args_list)
