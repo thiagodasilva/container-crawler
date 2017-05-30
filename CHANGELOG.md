@@ -1,3 +1,15 @@
+## 0.0.4 (2017-05-30)
+
+Features:
+
+    - Added the ability to use the internal-client.conf configuration file. This
+      enables consumers to override the default Swift InternalClient
+      configuration to include, for example, the encryption and keymaster
+      middlewares.
+    - Consumers can defer action on rows by raising a RetryError. This may be
+      useful if the row should be processed after some amount of time in the
+      future.
+
 ## 0.0.3 (2017-05-05)
 
 Features:
