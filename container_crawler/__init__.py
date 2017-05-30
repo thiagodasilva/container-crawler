@@ -75,9 +75,16 @@ use = egg:swift#catch_errors
         for _ in xrange(self.workers):
             self.pool.spawn_n(self._worker)
 
+    def _get_internal_client_config(self, conf):
+        ic_conf_path = conf.get(
+            'internal_client_path',
+            os.path.join(self.swift_dir, 'internal-client.conf'))
+        if os.path.exists(ic_conf_path):
+            return ic_conf_path
+        return ConfigString(self.INTERNAL_CLIENT_CONFIG)
+
     def _init_ic_pool(self, conf):
-        ic_config = ConfigString(conf.get('internal_client_config',
-                                          self.INTERNAL_CLIENT_CONFIG))
+        ic_config = self._get_internal_client_config(conf)
         ic_name = conf.get('internal_client_logname', 'ContainerCrawler')
         pool_size = conf.get('workers', 1)
         self._swift_pool = eventlet.pools.Pool(
