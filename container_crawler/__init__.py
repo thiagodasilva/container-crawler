@@ -16,6 +16,10 @@ from swift.common.wsgi import ConfigString
 from swift.container.backend import DATADIR, ContainerBroker
 
 
+class RetryError(Exception):
+    pass
+
+
 class ContainerCrawler(object):
     # TODO: pick up the IC configuration from /etc/swift
     INTERNAL_CLIENT_CONFIG = """
@@ -97,6 +101,8 @@ use = egg:swift#catch_errors
                     row, handler = work
                     with self._swift_pool.item() as swift_client:
                         handler.handle(row, swift_client)
+            except RetryError:
+                self.error_queue.put((row, None))
             except:
                 self.error_queue.put((row, traceback.format_exc()))
             finally:
@@ -111,11 +117,19 @@ use = egg:swift#catch_errors
         if self.error_queue.empty():
             return
 
+        retry_error = False
+
         while not self.error_queue.empty():
             row, error = self.error_queue.get()
-            self.log('error', u'Failed to handle row %s (%s): %r' % (
-                row['ROWID'], row['name'].decode('utf-8'), error))
-        raise RuntimeError('Failed to process rows')
+            if error:
+                self.log('error', u'Failed to handle row %s (%s): %r' % (
+                    row['ROWID'], row['name'].decode('utf-8'), error))
+            else:
+                retry_error = True
+        if not retry_error:
+            raise RuntimeError('Failed to process rows')
+        else:
+            raise RetryError('Rows must be retried later')
 
     def log(self, level, message):
         if not self.logger:
@@ -181,6 +195,8 @@ use = egg:swift#catch_errors
         """
         try:
             self.handle_container(settings)
+        except RetryError:
+            pass
         except:
             account = settings['account']
             container = settings['container']
