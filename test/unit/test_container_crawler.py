@@ -257,3 +257,61 @@ class TestContainerCrawler(unittest.TestCase):
         conf_mock.assert_called_once_with(
             container_crawler.ContainerCrawler.INTERNAL_CLIENT_CONFIG)
         ic_mock.assert_called_once_with(conf_string, 'ContainerCrawler', 3)
+
+    @mock.patch('container_crawler.ContainerBroker')
+    @mock.patch('os.listdir')
+    def test_handles_every_container_in_account(self, ls_mock, broker_mock):
+        account = 'foo'
+        self.crawler.conf['containers'] = [
+            {'account': account,
+             'container': '/*'}
+        ]
+        test_containers = ['foo', 'bar', 'baz']
+
+        self.mock_ic.iter_containers.return_value = [
+            {'name': container} for container in test_containers]
+        ls_mock.return_value = test_containers
+        broker_mock.return_value.get_items_since.return_value = []
+        broker_mock.return_value.get_info.return_value = {'id': 12345}
+
+        handler = mock.Mock()
+        handler.get_last_row.return_value = 42
+        self.mock_handler.return_value = handler
+        node = {'ip': '127.0.0.1', 'port': '8888', 'device': '/dev/foobar'}
+        self.crawler.container_ring.get_nodes.return_value = (
+            'deadbeef', [node])
+
+        self.crawler.run_once()
+
+        self.mock_ic.iter_containers.assert_called_once_with(account)
+        expected = [
+            (mock.call(mock.ANY, account=account, container=container),
+             mock.call().get_info(),
+             mock.call().get_items_since(42, 1000))
+            for container in test_containers]
+        broker_mock.assert_has_calls(
+            reduce(lambda x, y: list(x) + list(y), expected))
+        ls_mock.assert_called_once_with(
+            '%s/%s' % (self.conf['status_dir'], account))
+
+    @mock.patch('os.unlink')
+    @mock.patch('os.listdir')
+    def test_removes_missing_directories(self, ls_mock, unlink_mock):
+        account = 'foo'
+        self.crawler.conf['containers'] = [
+            {'account': account,
+             'container': '/*'}
+        ]
+        test_containers = ['foo', 'bar', 'baz']
+
+        self.mock_ic.iter_containers.return_value = []
+        ls_mock.return_value = test_containers
+
+        self.crawler.run_once()
+
+        self.mock_ic.iter_containers.assert_called_once_with(account)
+        ls_mock.assert_called_once_with(
+            '%s/%s' % (self.conf['status_dir'], account))
+        unlink_mock.assert_has_calls([
+            mock.call('%s/%s/%s' % (self.conf['status_dir'], account, cont))
+            for cont in test_containers], any_order=True)
