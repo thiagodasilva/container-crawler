@@ -2,6 +2,8 @@ import mock
 import container_crawler
 import unittest
 
+from container_crawler import RetryError
+
 
 class TestContainerCrawler(unittest.TestCase):
 
@@ -315,3 +317,33 @@ class TestContainerCrawler(unittest.TestCase):
         unlink_mock.assert_has_calls([
             mock.call('%s/%s/%s' % (self.conf['status_dir'], account, cont))
             for cont in test_containers], any_order=True)
+
+    def test_handle_retry_error(self):
+        fake_node = {'ip': '127.0.0.1', 'port': 1337}
+        part = 'deadbeef'
+        self.mock_ring.get_nodes.return_value = (part, [fake_node])
+
+        broker = mock.Mock()
+        broker.get_info.return_value = {'id': 12345}
+        rows = [{'name': 'foo'}]
+        broker.get_items_since.return_value = rows
+        self.crawler.get_broker = mock.Mock()
+        self.crawler.get_broker.return_value = broker
+
+        self.crawler.process_items = mock.Mock()
+        self.crawler.process_items.side_effect = RetryError
+
+        settings = {
+            'account': 'foo',
+            'container': 'bar'
+        }
+
+        handler_instance = mock.Mock()
+        self.mock_handler.return_value = handler_instance
+
+        self.crawler.call_handle_container(settings)
+
+        handler_instance.get_last_row.assert_called_once_with(12345)
+        self.assertEqual([], handler_instance.save_last_row.mock_calls)
+        self.crawler.process_items.assert_called_once_with(
+            handler_instance, rows, 1, 0)
