@@ -262,6 +262,9 @@ use = egg:swift#catch_errors
                 # CloudSync, however there is nothing we can do about that.
                 # TODO: keep track of container creation date to detect when
                 # they are removed and then added.
+                if not os.path.exists(os.path.join(
+                        self.status_dir, container_settings['account'])):
+                    continue
                 tracked_containers = os.listdir(os.path.join(
                     self.status_dir, container_settings['account']))
                 disappeared = set(tracked_containers) - set(all_containers)

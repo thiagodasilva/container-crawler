@@ -260,9 +260,11 @@ class TestContainerCrawler(unittest.TestCase):
             container_crawler.ContainerCrawler.INTERNAL_CLIENT_CONFIG)
         ic_mock.assert_called_once_with(conf_string, 'ContainerCrawler', 3)
 
+    @mock.patch('os.path.exists')
     @mock.patch('container_crawler.ContainerBroker')
     @mock.patch('os.listdir')
-    def test_handles_every_container_in_account(self, ls_mock, broker_mock):
+    def test_handles_every_container_in_account(self, ls_mock, broker_mock,
+                                                exists_mock):
         account = 'foo'
         self.crawler.conf['containers'] = [
             {'account': account,
@@ -283,6 +285,8 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.container_ring.get_nodes.return_value = (
             'deadbeef', [node])
 
+        exists_mock.return_value = True
+
         self.crawler.run_once()
 
         self.mock_ic.iter_containers.assert_called_once_with(account)
@@ -296,9 +300,11 @@ class TestContainerCrawler(unittest.TestCase):
         ls_mock.assert_called_once_with(
             '%s/%s' % (self.conf['status_dir'], account))
 
+    @mock.patch('os.path.exists')
     @mock.patch('os.unlink')
     @mock.patch('os.listdir')
-    def test_removes_missing_directories(self, ls_mock, unlink_mock):
+    def test_removes_missing_directories(self, ls_mock, unlink_mock,
+                                         exists_mock):
         account = 'foo'
         self.crawler.conf['containers'] = [
             {'account': account,
@@ -308,6 +314,7 @@ class TestContainerCrawler(unittest.TestCase):
 
         self.mock_ic.iter_containers.return_value = []
         ls_mock.return_value = test_containers
+        exists_mock.return_value = True
 
         self.crawler.run_once()
 
