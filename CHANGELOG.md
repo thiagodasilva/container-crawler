@@ -1,3 +1,10 @@
+## 0.0.5 (2017-06-21)
+
+Bug fixes:
+
+    - Check the directory existence before attempting to remove truncated
+      container status files.
+
 ## 0.0.4 (2017-05-30)
 
 Features:
