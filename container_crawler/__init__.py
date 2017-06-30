@@ -171,19 +171,18 @@ use = egg:swift#catch_errors
         if verified_rows:
             self.submit_items(handler, verified_rows)
 
-    def handle_container(self, settings):
+    def handle_container(self, handler):
         part, container_nodes = self.container_ring.get_nodes(
-            settings['account'].encode('utf-8'),
-            settings['container'].encode('utf-8'))
+            handler._account.encode('utf-8'),
+            handler._container.encode('utf-8'))
         nodes_count = len(container_nodes)
-        handler = self.handler_class(self.status_dir, settings)
 
         for index, node in enumerate(container_nodes):
             if not is_local_device(self.myips, None, node['ip'],
                                    node['port']):
                 continue
-            broker = self.get_broker(settings['account'],
-                                     settings['container'],
+            broker = self.get_broker(handler._account,
+                                     handler._container,
                                      part, node)
             broker_info = broker.get_info()
             last_row = handler.get_last_row(broker_info['id'])
@@ -197,12 +196,18 @@ use = egg:swift#catch_errors
                 self.process_items(handler, items, nodes_count, index)
                 handler.save_last_row(items[-1]['ROWID'], broker_info['id'])
 
-    def call_handle_container(self, settings):
+    def call_handle_container(self, settings, per_account=False):
         """ Thin wrapper around the handle_container() method for error
             handling.
+
+            Arguments
+            settings -- dictionary with settings used for the
+            per_account -- whether the whole account is crawled.
         """
         try:
-            self.handle_container(settings)
+            handler = self.handler_class(self.status_dir, settings,
+                                         per_account=per_account)
+            self.handle_container(handler)
         except RetryError:
             pass
         except:
@@ -252,10 +257,10 @@ use = egg:swift#catch_errors
             if container_settings['container'] == '/*':
                 all_containers = self.list_containers(
                     container_settings['account'])
-                settings_copy = container_settings.copy()
                 for container in all_containers:
+                    settings_copy = container_settings.copy()
                     settings_copy['container'] = container
-                    self.call_handle_container(settings_copy)
+                    self.call_handle_container(settings_copy, per_account=True)
                 # After iterating over all of the containers, we prune any
                 # entries from containers that may have been deleted (so as to
                 # avoid missing data). There is still a chance where a

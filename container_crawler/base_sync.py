@@ -9,7 +9,20 @@ class BaseSync(object):
     by all child classes.
     """
 
-    def __init__(self, status_dir, settings):
+    def __init__(self, status_dir, settings, per_account=False):
+        """Base class that all users of the ContainerCrawler should derive from
+
+        Arguments:
+        status_dir -- directory that contains the sync status files
+        settings -- sync settings; contains at least the following keys:
+            account -- the Swift account that is synced
+            container -- the specifc container within the account
+            Any other keys are provider specific.
+
+        Keyword arguments:
+        per_account -- whether the operation is happening on every container in
+                       the account.
+        """
         self._status_dir = status_dir
         self._account = settings['account']
         self._container = settings['container']
@@ -17,6 +30,7 @@ class BaseSync(object):
                                          self._container)
         self._status_account_dir = os.path.join(self._status_dir,
                                                 self._account)
+        self._per_account = per_account
 
     def handle(self, rows, swift_client):
         raise NotImplementedError
