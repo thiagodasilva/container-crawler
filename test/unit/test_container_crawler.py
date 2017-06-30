@@ -3,6 +3,7 @@ import container_crawler
 import unittest
 
 from container_crawler import RetryError
+from container_crawler.base_sync import BaseSync
 
 
 class TestContainerCrawler(unittest.TestCase):
@@ -74,15 +75,21 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_ring.get_nodes.return_value = ['part', []]
 
         self.crawler.handler_class = mock.Mock()
+        self.crawler.handler_class.__name__ = 'MockHandler'
         self.crawler.handler_class.side_effect = RuntimeError('oops')
+
+        self.crawler.logger = mock.Mock()
 
         settings = {'account': 'AUTH_account',
                     'container': 'container'}
-        with self.assertRaises(RuntimeError):
-            self.crawler.handle_container(settings)
-
+        self.crawler.call_handle_container(settings)
         self.crawler.handler_class.assert_called_once_with(
-            '/var/scratch', settings)
+            '/var/scratch', settings, per_account=False)
+        self.crawler.logger.assert_has_calls([
+            mock.call.error('Failed to process AUTH_account/container with '
+                            'MockHandler'),
+            mock.call.error(mock.ANY)
+        ])
 
     def test_process_items_errors(self):
         rows = 10
@@ -202,9 +209,10 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.handle_container.side_effect = RuntimeError('oops')
         self.crawler.run_once()
 
-        expected_handle_calls = [mock.call(containers[0])]
-        self.assertEqual(expected_handle_calls,
-                         self.crawler.handle_container.call_args_list)
+        expected_handler_calls = [mock.call(
+            self.conf['status_dir'], containers[0], per_account=False)]
+        self.assertEqual(expected_handler_calls,
+                         self.mock_handler.call_args_list)
         expected_logger_calls = [
             mock.call("Failed to process foo/bar with %s" %
                       (self.crawler.handler_class.__name__)),
@@ -224,10 +232,11 @@ class TestContainerCrawler(unittest.TestCase):
         ]
 
         self.crawler.run_once()
-        expected_calls = [mock.call(container)
+        expected_calls = [mock.call(self.conf['status_dir'],
+                                    container, per_account=False)
                           for container in self.crawler.conf['containers']]
         self.assertEquals(expected_calls,
-                          self.crawler.handle_container.call_args_list)
+                          self.mock_handler.call_args_list)
 
     @mock.patch('container_crawler.InternalClient')
     @mock.patch('container_crawler.Ring')
@@ -278,9 +287,17 @@ class TestContainerCrawler(unittest.TestCase):
         broker_mock.return_value.get_items_since.return_value = []
         broker_mock.return_value.get_info.return_value = {'id': 12345}
 
-        handler = mock.Mock()
-        handler.get_last_row.return_value = 42
-        self.mock_handler.return_value = handler
+        class FakeHandler(BaseSync):
+            def handle(self, row):
+                pass
+
+            def get_last_row(self, db_id):
+                return 42
+
+            def save_last_row(self, row_id, db_id):
+                pass
+
+        self.mock_handler.side_effect = FakeHandler
         node = {'ip': '127.0.0.1', 'port': '8888', 'device': '/dev/foobar'}
         self.crawler.container_ring.get_nodes.return_value = (
             'deadbeef', [node])
@@ -299,6 +316,12 @@ class TestContainerCrawler(unittest.TestCase):
             reduce(lambda x, y: list(x) + list(y), expected))
         ls_mock.assert_called_once_with(
             '%s/%s' % (self.conf['status_dir'], account))
+        expected_handler_calls = [
+            mock.call(self.conf['status_dir'],
+                      {'account': account, 'container': container},
+                      per_account=True)
+            for container in test_containers]
+        self.mock_handler.assert_has_calls(expected_handler_calls)
 
     @mock.patch('os.path.exists')
     @mock.patch('os.unlink')
