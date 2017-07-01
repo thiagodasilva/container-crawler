@@ -1,3 +1,5 @@
+# -*- coding: UTF-8 -*-
+
 import mock
 import container_crawler
 import unittest
@@ -354,3 +356,30 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual([], handler_instance.save_last_row.mock_calls)
         self.crawler.process_items.assert_called_once_with(
             handler_instance, rows, 1, 0)
+
+    def test_handle_unicode_account_container(self):
+        settings = {'account': u'ünìçódê', 'container': u'c😁ntainer'}
+        self.crawler.logger = mock.Mock()
+        self.mock_ring.get_nodes.return_value = (
+            '/some/path', [{'port': 555,
+                            'ip': '127.0.0.1',
+                            'device': '/dev/foo'}])
+
+        broker_class = 'container_crawler.ContainerBroker'
+        fake_handler = mock.Mock()
+        self.mock_handler.return_value = fake_handler
+
+        with mock.patch('%s.get_info' % broker_class) as info_mock, \
+                mock.patch('%s.get_items_since' % broker_class) as items_mock:
+            info_mock.return_value = {'id': 'deadbeef'}
+            items_mock.return_value = [{'name': 'object', 'ROWID': 42}]
+
+            self.crawler.call_handle_container(settings)
+
+        self.assertEqual([], self.crawler.logger.mock_calls)
+        self.mock_handler.assert_called_once_with(
+            self.conf['status_dir'], settings)
+        fake_handler.get_last_row.assert_called_once_with('deadbeef')
+        fake_handler.handle.assert_called_once_with(
+            {'name': 'object', 'ROWID': 42}, self.mock_ic)
+        fake_handler.save_last_row.assert_called_once_with(42, 'deadbeef')

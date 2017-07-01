@@ -144,7 +144,7 @@ use = egg:swift#catch_errors
         getattr(self.logger, level)(message)
 
     def get_broker(self, account, container, part, node):
-        db_hash = hash_path(account, container)
+        db_hash = hash_path(account.encode('utf-8'), container.encode('utf-8'))
         db_dir = storage_directory(DATADIR, part, db_hash)
         db_path = os.path.join(self.root, node['device'], db_dir,
                                db_hash + '.db')
@@ -173,7 +173,8 @@ use = egg:swift#catch_errors
 
     def handle_container(self, settings):
         part, container_nodes = self.container_ring.get_nodes(
-            settings['account'], settings['container'])
+            settings['account'].encode('utf-8'),
+            settings['container'].encode('utf-8'))
         nodes_count = len(container_nodes)
         handler = self.handler_class(self.status_dir, settings)
 
@@ -208,7 +209,7 @@ use = egg:swift#catch_errors
             account = settings['account']
             container = settings['container']
             self.log('error', "Failed to process %s/%s with %s" % (
-                account.decode('utf-8'), container.decode('utf-8'),
+                account, container,
                 self.handler_class.__name__))
             self.log('error', traceback.format_exc())
 
