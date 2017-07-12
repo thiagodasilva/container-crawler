@@ -1,3 +1,11 @@
+## 0.0.6 (2017-07-12)
+
+Bug fixes:
+
+    - Support unicode characters in account/containers properly.
+    - Added an indicator of the per-account setting being set for a container
+      mapping.
+
 ## 0.0.5 (2017-06-21)
 
 Bug fixes:
