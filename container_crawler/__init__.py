@@ -259,7 +259,7 @@ use = egg:swift#catch_errors
                     container_settings['account'])
                 for container in all_containers:
                     settings_copy = container_settings.copy()
-                    settings_copy['container'] = container
+                    settings_copy['container'] = container.decode('utf-8')
                     self.call_handle_container(settings_copy, per_account=True)
                 # After iterating over all of the containers, we prune any
                 # entries from containers that may have been deleted (so as to
