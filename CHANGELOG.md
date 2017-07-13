@@ -1,3 +1,11 @@
+## 0.0.7 (2017-07-13)
+
+Bug fixes:
+
+    - To properly handle unicode characters in the container names, we should
+      decode them when listing using the Swift Internal Client, as they are
+      returned as UTF-8 encoded strings.
+
 ## 0.0.6 (2017-07-12)
 
 Bug fixes:
