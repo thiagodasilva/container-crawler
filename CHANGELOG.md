@@ -1,3 +1,10 @@
+## 0.0.7.1 (2017-07-24)
+
+Bug fixes:
+
+    - The internal client pool was always set to 1. This resulted in
+      serialization of processing.
+
 ## 0.0.7 (2017-07-13)
 
 Bug fixes:
