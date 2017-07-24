@@ -249,8 +249,9 @@ class TestContainerCrawler(unittest.TestCase):
 
         container_crawler.ContainerCrawler(self.conf, self.mock_handler)
 
-        ic_mock.assert_called_once_with(
-            '/etc/swift/internal-client.conf', 'ContainerCrawler', 3)
+        ic_mock.assert_has_calls([
+            mock.call('/etc/swift/internal-client.conf',
+                      'ContainerCrawler', 3)] * 10)
 
     @mock.patch('container_crawler.ConfigString')
     @mock.patch('container_crawler.InternalClient')
@@ -269,7 +270,8 @@ class TestContainerCrawler(unittest.TestCase):
             '/etc/swift/internal-client.conf')
         conf_mock.assert_called_once_with(
             container_crawler.ContainerCrawler.INTERNAL_CLIENT_CONFIG)
-        ic_mock.assert_called_once_with(conf_string, 'ContainerCrawler', 3)
+        ic_mock.assert_has_calls([
+            mock.call(conf_string, 'ContainerCrawler', 3)] * 10)
 
     @mock.patch('os.path.exists')
     @mock.patch('container_crawler.ContainerBroker')

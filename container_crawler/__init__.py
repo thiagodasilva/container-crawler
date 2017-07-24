@@ -86,7 +86,7 @@ use = egg:swift#catch_errors
     def _init_ic_pool(self, conf):
         ic_config = self._get_internal_client_config(conf)
         ic_name = conf.get('internal_client_logname', 'ContainerCrawler')
-        pool_size = conf.get('workers', 1)
+        pool_size = self.workers
         self._swift_pool = eventlet.pools.Pool(
             create=lambda: InternalClient(ic_config, ic_name, 3),
             min_size=pool_size,
