@@ -170,6 +170,7 @@ use = egg:swift#catch_errors
             lambda row: row['ROWID'] % nodes_count != node_id, rows)
         if verified_rows:
             self.submit_items(handler, verified_rows)
+        return len(owned_rows), len(verified_rows)
 
     def handle_container(self, handler):
         part, container_nodes = self.container_ring.get_nodes(
@@ -193,8 +194,20 @@ use = egg:swift#catch_errors
             except DatabaseConnectionError:
                 continue
             if items:
-                self.process_items(handler, items, nodes_count, index)
+                self.log(
+                    'info',
+                    'Processing %d rows since row %d for %s/%s' % (
+                        len(items),
+                        last_row,
+                        handler._account,
+                        handler._container))
+                owned_count, verified_count = self.process_items(
+                    handler, items, nodes_count, index)
                 handler.save_last_row(items[-1]['ROWID'], broker_info['id'])
+                self.log(
+                    'info',
+                    'Processed %d rows; verified %d rows; last row: %d' % (
+                        owned_count, verified_count, items[-1]['ROWID']))
 
     def call_handle_container(self, settings, per_account=False):
         """ Thin wrapper around the handle_container() method for error

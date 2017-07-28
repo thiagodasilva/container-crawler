@@ -373,6 +373,7 @@ class TestContainerCrawler(unittest.TestCase):
         }
 
         handler_instance = mock.Mock()
+        handler_instance.get_last_row.return_value = 1337
         self.mock_handler.return_value = handler_instance
 
         self.crawler.call_handle_container(settings)
@@ -395,6 +396,7 @@ class TestContainerCrawler(unittest.TestCase):
         fake_handler = mock.Mock(spec=BaseSync)
         fake_handler._account = settings['account']
         fake_handler._container = settings['container']
+        fake_handler.get_last_row.return_value = 1337
         self.mock_handler.return_value = fake_handler
 
         with mock.patch('%s.get_info' % broker_class) as info_mock, \
@@ -404,7 +406,12 @@ class TestContainerCrawler(unittest.TestCase):
 
             self.crawler.call_handle_container(settings)
 
-        self.assertEqual([], self.crawler.logger.mock_calls)
+        self.assertEqual(
+            [mock.call.info('Processing 1 rows since row 1337 for %s/%s' % (
+                    settings['account'], settings['container'])),
+             mock.call.info(
+                'Processed 1 rows; verified 0 rows; last row: 42')],
+            self.crawler.logger.mock_calls)
         self.mock_handler.assert_called_once_with(
             self.conf['status_dir'], settings, per_account=False)
         fake_handler.get_last_row.assert_called_once_with('deadbeef')
