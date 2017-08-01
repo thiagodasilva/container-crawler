@@ -1,3 +1,10 @@
+## 0.0.8 (2017-08-01)
+
+Improvements:
+
+    - Add logging for each set of processed and verified rows. This is useful
+      for ensuring that container crawler continues to make progress.
+
 ## 0.0.7.1 (2017-07-24)
 
 Bug fixes:
