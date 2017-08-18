@@ -60,6 +60,8 @@ use = egg:swift#catch_errors
 
         if not self.bulk:
             self._init_workers(conf)
+        else:
+            self.workers = 1
         self._init_ic_pool(conf)
 
         self.log('debug', 'Created the Container Crawler instance')

@@ -418,3 +418,50 @@ class TestContainerCrawler(unittest.TestCase):
         fake_handler.handle.assert_called_once_with(
             {'name': 'object', 'ROWID': 42}, self.mock_ic)
         fake_handler.save_last_row.assert_called_once_with(42, 'deadbeef')
+
+    @mock.patch('container_crawler.InternalClient')
+    @mock.patch('container_crawler.Ring')
+    def test_bulk_init(self, mock_ring, mock_ic):
+        self.mock_ring = mock.Mock()
+        mock_ring.return_value = self.mock_ring
+        self.mock_handler = mock.Mock()
+        self.mock_handler.__name__ = 'MockHandler'
+
+        self.mock_ic = mock.Mock()
+        mock_ic.return_value = self.mock_ic
+
+        self.conf = {'devices': '/devices',
+                     'items_chunk': 1000,
+                     'status_dir': '/var/scratch',
+                     'bulk_process': True}
+        crawler = container_crawler.ContainerCrawler(
+            self.conf, self.mock_handler)
+        self.assertEqual(True, crawler.bulk)
+        self.assertEqual(1, crawler._swift_pool.min_size)
+        self.assertEqual(1, crawler._swift_pool.max_size)
+        self.assertEqual(1, crawler._swift_pool.current_size)
+
+    @mock.patch('container_crawler.InternalClient')
+    @mock.patch('container_crawler.Ring')
+    def test_no_bulk_init(self, mock_ring, mock_ic):
+        self.mock_ring = mock.Mock()
+        mock_ring.return_value = self.mock_ring
+        self.mock_handler = mock.Mock()
+        self.mock_handler.__name__ = 'MockHandler'
+
+        self.mock_ic = mock.Mock()
+        mock_ic.return_value = self.mock_ic
+
+        self.conf = {'devices': '/devices',
+                     'items_chunk': 1000,
+                     'status_dir': '/var/scratch',
+                     'bulk_process': False,
+                     'workers': 50}
+        crawler = container_crawler.ContainerCrawler(
+            self.conf, self.mock_handler)
+        self.assertEqual(False, crawler.bulk)
+        self.assertEqual(50, crawler._swift_pool.min_size)
+        self.assertEqual(50, crawler._swift_pool.max_size)
+        self.assertEqual(50, crawler._swift_pool.current_size)
+        self.assertEqual(50, crawler.pool.size)
+        self.assertEqual(100, crawler.work_queue.maxsize)
