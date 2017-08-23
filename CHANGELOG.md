@@ -1,3 +1,10 @@
+## 0.0.9 (2017-08-23)
+
+Bug fixes:
+
+    - Fix a regression where bulk processing could no longer instantiate a
+      ContainerCrawler object.
+
 ## 0.0.8 (2017-08-01)
 
 Improvements:
