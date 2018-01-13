@@ -8,12 +8,12 @@ import traceback
 
 from swift.common.db import DatabaseConnectionError
 from swift.common.ring import Ring
-from swift.common.internal_client import InternalClient
 from swift.common.ring.utils import is_local_device
 from swift.common.utils import whataremyips, hash_path, storage_directory
-from swift.common.wsgi import ConfigString
 
 from swift.container.backend import DATADIR, ContainerBroker
+
+from .utils import create_internal_client
 
 
 class RetryError(Exception):
@@ -21,25 +21,6 @@ class RetryError(Exception):
 
 
 class ContainerCrawler(object):
-    # TODO: pick up the IC configuration from /etc/swift
-    INTERNAL_CLIENT_CONFIG = """
-[DEFAULT]
-[pipeline:main]
-pipeline = catch_errors proxy-logging cache proxy-server
-
-[app:proxy-server]
-use = egg:swift#proxy
-
-[filter:cache]
-use = egg:swift#memcache
-
-[filter:proxy-logging]
-use = egg:swift#proxy_logging
-
-[filter:catch_errors]
-use = egg:swift#catch_errors
-""".lstrip()
-
     def __init__(self, conf, handler_class, logger=None):
         if not handler_class:
             raise RuntimeError('Handler class must be defined')
@@ -77,20 +58,10 @@ use = egg:swift#catch_errors
         for _ in xrange(self.workers):
             self.pool.spawn_n(self._worker)
 
-    def _get_internal_client_config(self, conf):
-        ic_conf_path = conf.get(
-            'internal_client_path',
-            os.path.join(self.swift_dir, 'internal-client.conf'))
-        if os.path.exists(ic_conf_path):
-            return ic_conf_path
-        return ConfigString(self.INTERNAL_CLIENT_CONFIG)
-
     def _init_ic_pool(self, conf):
-        ic_config = self._get_internal_client_config(conf)
-        ic_name = conf.get('internal_client_logname', 'ContainerCrawler')
         pool_size = self.workers
         self._swift_pool = eventlet.pools.Pool(
-            create=lambda: InternalClient(ic_config, ic_name, 3),
+            create=lambda: create_internal_client(conf, self.swift_dir),
             min_size=pool_size,
             max_size=pool_size)
 
