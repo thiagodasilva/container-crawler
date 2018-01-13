@@ -408,7 +408,7 @@ class TestContainerCrawler(unittest.TestCase):
 
         self.assertEqual(
             [mock.call.info('Processing 1 rows since row 1337 for %s/%s' % (
-                    settings['account'], settings['container'])),
+                settings['account'], settings['container'])),
              mock.call.info(
                 'Processed 1 rows; verified 0 rows; last row: 42')],
             self.crawler.logger.mock_calls)
