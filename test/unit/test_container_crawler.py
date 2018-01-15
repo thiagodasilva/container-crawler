@@ -10,7 +10,7 @@ from container_crawler.base_sync import BaseSync
 
 class TestContainerCrawler(unittest.TestCase):
 
-    @mock.patch('container_crawler.InternalClient')
+    @mock.patch('container_crawler.utils.InternalClient')
     @mock.patch('container_crawler.Ring')
     def setUp(self, mock_ring, mock_ic):
         self.mock_ring = mock.Mock()
@@ -240,39 +240,6 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEquals(expected_calls,
                           self.mock_handler.call_args_list)
 
-    @mock.patch('container_crawler.InternalClient')
-    @mock.patch('container_crawler.Ring')
-    @mock.patch('container_crawler.os')
-    def test_internal_client_path(self, os_mock, ring_mock, ic_mock):
-        os_mock.path.exists.return_value = True
-        os_mock.path.join.side_effect = lambda *x: '/'.join(x)
-
-        container_crawler.ContainerCrawler(self.conf, self.mock_handler)
-
-        ic_mock.assert_has_calls([
-            mock.call('/etc/swift/internal-client.conf',
-                      'ContainerCrawler', 3)] * 10)
-
-    @mock.patch('container_crawler.ConfigString')
-    @mock.patch('container_crawler.InternalClient')
-    @mock.patch('container_crawler.Ring')
-    @mock.patch('container_crawler.os')
-    def test_internal_client_path_not_found(
-            self, os_mock, ring_mock, ic_mock, conf_mock):
-        os_mock.path.exists.return_value = False
-        os_mock.path.join.side_effect = lambda *x: '/'.join(x)
-        conf_string = mock.Mock()
-        conf_mock.return_value = conf_string
-
-        container_crawler.ContainerCrawler(self.conf, self.mock_handler)
-
-        os_mock.path.exists.assert_called_once_with(
-            '/etc/swift/internal-client.conf')
-        conf_mock.assert_called_once_with(
-            container_crawler.ContainerCrawler.INTERNAL_CLIENT_CONFIG)
-        ic_mock.assert_has_calls([
-            mock.call(conf_string, 'ContainerCrawler', 3)] * 10)
-
     @mock.patch('os.path.exists')
     @mock.patch('container_crawler.ContainerBroker')
     @mock.patch('os.listdir')
@@ -419,7 +386,7 @@ class TestContainerCrawler(unittest.TestCase):
             {'name': 'object', 'ROWID': 42}, self.mock_ic)
         fake_handler.save_last_row.assert_called_once_with(42, 'deadbeef')
 
-    @mock.patch('container_crawler.InternalClient')
+    @mock.patch('container_crawler.utils.InternalClient')
     @mock.patch('container_crawler.Ring')
     def test_bulk_init(self, mock_ring, mock_ic):
         self.mock_ring = mock.Mock()
@@ -441,7 +408,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(1, crawler._swift_pool.max_size)
         self.assertEqual(1, crawler._swift_pool.current_size)
 
-    @mock.patch('container_crawler.InternalClient')
+    @mock.patch('container_crawler.utils.InternalClient')
     @mock.patch('container_crawler.Ring')
     def test_no_bulk_init(self, mock_ring, mock_ic):
         self.mock_ring = mock.Mock()
