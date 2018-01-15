@@ -12,5 +12,4 @@ setup(name='container-crawler',
       test_suite='nose.collector',
       url='https://github.com/swiftstack/container-crawler',
       packages=['container_crawler'],
-      install_requires = reqs
-     )
+      install_requires=reqs)
