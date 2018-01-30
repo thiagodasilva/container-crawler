@@ -1,3 +1,9 @@
+## 0.0.10 (2018-01-30)
+
+Improvements:
+
+    - Reoganize InternalClient helpers in utils.
+
 ## 0.0.9 (2017-08-23)
 
 Bug fixes:
