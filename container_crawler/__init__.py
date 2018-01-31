@@ -132,7 +132,6 @@ class ContainerCrawler(object):
         for row in rows:
             self.work_queue.put((row, handler))
         self.work_queue.join()
-        self._check_errors()
 
     def process_items(self, handler, rows, nodes_count, node_id):
         owned_rows = filter(
@@ -143,6 +142,7 @@ class ContainerCrawler(object):
             lambda row: row['ROWID'] % nodes_count != node_id, rows)
         if verified_rows:
             self.submit_items(handler, verified_rows)
+        self._check_errors()
         return len(owned_rows), len(verified_rows)
 
     def handle_container(self, handler):

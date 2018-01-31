@@ -104,10 +104,11 @@ class TestContainerCrawler(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.crawler.process_items(mock_handler, items, 2, node_id)
 
-            handle_calls = filter(lambda x: x % 2 == node_id,
-                                  range(0, rows))
+            handle_rows = filter(lambda x: x % 2 == node_id, range(0, rows))
+            verify_rows = filter(lambda x: x % 2 != node_id, range(0, rows))
             expected = [mock.call({'ROWID': row_id, 'name': str(row_id)},
-                                  self.mock_ic) for row_id in handle_calls]
+                                  self.mock_ic)
+                        for row_id in handle_rows + verify_rows]
             self.assertEqual(expected,
                              mock_handler.handle.call_args_list)
 
@@ -149,7 +150,7 @@ class TestContainerCrawler(unittest.TestCase):
         tb_mock.return_value = 'traceback'
 
         with self.assertRaises(RuntimeError):
-            self.crawler.submit_items(mock_handler, [row])
+            self.crawler.process_items(mock_handler, [row], 1, 0)
         self.crawler.logger.error.assert_called_once_with(
             "Failed to handle row %d (%s): 'traceback'" % (
                 row['ROWID'], row['name'].decode('utf-8')))
@@ -164,7 +165,7 @@ class TestContainerCrawler(unittest.TestCase):
         row = {'name': 'failed', 'deleted': False, 'ROWID': 1}
 
         with self.assertRaises(RuntimeError):
-            self.crawler.submit_items(mock_handler, [row])
+            self.crawler.process_items(mock_handler, [row], 1, 0)
         self.crawler.logger.error.assert_called_once_with(
             "Failed to handle row %d (%s): 'traceback'" % (
                 row['ROWID'], row['name'].decode('utf-8')))
