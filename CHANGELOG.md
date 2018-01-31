@@ -1,3 +1,10 @@
+## 0.0.11 (2018-01-31)
+
+Bug fixes:
+
+    - Check errors after verifying the rows of other nodes, as otherwise a given
+      node may never pick up the work left from the other node.
+
 ## 0.0.10 (2018-01-30)
 
 Improvements:
