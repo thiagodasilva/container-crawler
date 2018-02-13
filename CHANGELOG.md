@@ -1,3 +1,9 @@
+## 0.0.12 (2018-02-13)
+
+Improvements:
+
+    - Add SkipContainer exception that handlers can raise during initialization.
+
 ## 0.0.11 (2018-01-31)
 
 Bug fixes:
@@ -9,7 +15,7 @@ Bug fixes:
 
 Improvements:
 
-    - Reoganize InternalClient helpers in utils.
+    - Reorganize InternalClient helpers in utils.
 
 ## 0.0.9 (2017-08-23)
 
