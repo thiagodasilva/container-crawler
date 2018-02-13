@@ -20,6 +20,14 @@ class RetryError(Exception):
     pass
 
 
+class SkipContainer(Exception):
+    '''
+    Raised during initialization when the provided container (for
+    whatever reason) *should not* be crawled.
+    '''
+    pass
+
+
 class ContainerCrawler(object):
     def __init__(self, conf, handler_class, logger=None):
         if not handler_class:
@@ -194,6 +202,8 @@ class ContainerCrawler(object):
             handler = self.handler_class(self.status_dir, settings,
                                          per_account=per_account)
             self.handle_container(handler)
+        except SkipContainer:
+            self.log('info', "Skipping %(account)s/%(container)s" % settings)
         except RetryError:
             pass
         except:
