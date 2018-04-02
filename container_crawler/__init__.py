@@ -9,7 +9,8 @@ import traceback
 from swift.common.db import DatabaseConnectionError
 from swift.common.ring import Ring
 from swift.common.ring.utils import is_local_device
-from swift.common.utils import whataremyips, hash_path, storage_directory
+from swift.common.utils import whataremyips, hash_path, storage_directory, \
+    config_true_value
 
 from swift.container.backend import DATADIR, ContainerBroker
 
@@ -36,7 +37,7 @@ class ContainerCrawler(object):
         self.logger = logger
         self.conf = conf
         self.root = conf['devices']
-        self.bulk = conf.get('bulk_process', False)
+        self.bulk = config_true_value(conf.get('bulk_process', False))
         self.interval = 10
         self.swift_dir = '/etc/swift'
         self.container_ring = Ring(self.swift_dir, ring_name='container')
@@ -102,7 +103,8 @@ class ContainerCrawler(object):
         self.pool.waitall()
 
     def _check_errors(self):
-        if self.error_queue.empty():
+        # When working in bulk, errors are propagated immediately
+        if self.bulk or self.error_queue.empty():
             return
 
         retry_error = False

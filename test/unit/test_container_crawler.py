@@ -50,7 +50,14 @@ class TestContainerCrawler(unittest.TestCase):
                                  mock_handler.handle.call_args_list)
 
     def test_bulk_handling(self):
-        self.crawler.bulk = True
+        self.conf['bulk_process'] = 'true'
+        with mock.patch('container_crawler.utils.InternalClient',
+                        return_value=self.mock_ic), \
+                mock.patch('container_crawler.Ring',
+                           return_value=self.mock_ring):
+            self.crawler = container_crawler.ContainerCrawler(
+                self.conf, self.mock_handler)
+        self.assertEqual(self.crawler.bulk, True)
 
         total_rows = 20
         items = [{'ROWID': x} for x in range(0, total_rows)]
@@ -65,7 +72,14 @@ class TestContainerCrawler(unittest.TestCase):
 
     def test_bulk_errors(self):
         self.mock_ring.get_nodes.return_value = ['part', []]
-        self.crawler.bulk = True
+        self.conf['bulk_process'] = 'true'
+        with mock.patch('container_crawler.utils.InternalClient',
+                        return_value=self.mock_ic), \
+                mock.patch('container_crawler.Ring',
+                           return_value=self.mock_ring):
+            self.crawler = container_crawler.ContainerCrawler(
+                self.conf, self.mock_handler)
+        self.assertEqual(self.crawler.bulk, True)
 
         mock_handler = mock.Mock()
         mock_handler.handle.side_effect = RuntimeError('error')
