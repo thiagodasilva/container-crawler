@@ -1,3 +1,13 @@
+## 0.0.13 (2018-04-02)
+
+Bug fixes:
+
+    - Configuration files can now explicitly set bulk_process to false to turn
+      off bulk processing. Previously this was only possible by omitting the
+      config value entirely.
+    - Running with bulk processing enabled no longer raises AttributeErrors
+      all the time.
+
 ## 0.0.12 (2018-02-13)
 
 Improvements:
