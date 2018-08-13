@@ -16,7 +16,7 @@ class BaseSync(object):
         status_dir -- directory that contains the sync status files
         settings -- sync settings; contains at least the following keys:
             account -- the Swift account that is synced
-            container -- the specifc container within the account
+            container -- the specific container within the account
             Any other keys are provider specific.
 
         Keyword arguments:
