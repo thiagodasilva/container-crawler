@@ -29,6 +29,53 @@ class SkipContainer(Exception):
     pass
 
 
+class ContainerJob(object):
+    PASS_SUCCEEDED = 1
+    PASS_FAILED = 2
+
+    def __init__(self):
+        # The Queue is only used to mimic a condition variable, so that we can
+        # block on tasks being completed.
+        self._done = eventlet.queue.Queue()
+        self._lock = eventlet.semaphore.Semaphore(1)
+        self._reset()
+
+    def _reset(self):
+        self._outstanding = 0
+        self._retry = False
+        self._error = False
+
+    def wait_all(self):
+        '''Waits until all of the rows for this iteration of the container have
+           been completed.
+           NOTE: this only works for a single producer thread, since we are not
+           holding the lock here, we are not guarding against another thread
+           submitting tasks!
+        '''
+        self._done.get()
+        # At some point we may want to differentiate RetryError vs all other
+        # errors.
+        ret = not self._retry and not self._error
+        self._reset()
+        return self.PASS_SUCCEEDED if ret else self.PASS_FAILED
+
+    def submit_tasks(self, tasks, work_queue):
+        with self._lock:
+            self._outstanding += len(tasks)
+            for task in tasks:
+                work_queue.put((task, self))
+
+    def complete_task(self, error=False, retry=False):
+        with self._lock:
+            self._outstanding -= 1
+            if error and not self._error:
+                self._error = error
+            if retry and not self._retry:
+                self._retry = retry
+            if self._outstanding == 0:
+                self._done.put(None)
+
+
 class ContainerCrawler(object):
     def __init__(self, conf, handler_class, logger=None):
         if not handler_class:
@@ -47,25 +94,31 @@ class ContainerCrawler(object):
         self.items_chunk = conf['items_chunk']
         self.poll_interval = conf.get('poll_interval', 5)
         self.handler_class = handler_class
+        self._in_progress_containers = set()
 
-        if not self.bulk:
-            self._init_workers(conf)
-        else:
+        if self.bulk:
             self.workers = 1
+
+        self._init_workers(conf)
         self._init_ic_pool(conf)
 
         self.log('debug', 'Created the Container Crawler instance')
 
     def _init_workers(self, conf):
-        self.workers = conf.get('workers', 10)
-        self.pool = eventlet.GreenPool(self.workers)
-        self.work_queue = eventlet.queue.Queue(self.workers * 2)
+        if not self.bulk:
+            self.workers = conf.get('workers', 10)
+            self.worker_pool = eventlet.GreenPool(self.workers)
+            self.work_queue = eventlet.queue.Queue(self.workers * 2)
 
-        # max_size=None means a Queue is infinite
-        self.error_queue = eventlet.queue.Queue(maxsize=None)
-        self.stats_queue = eventlet.queue.Queue(maxsize=None)
-        for _ in xrange(self.workers):
-            self.pool.spawn_n(self._worker)
+            for _ in xrange(self.workers):
+                self.worker_pool.spawn_n(self._worker)
+
+        self.enumerator_workers = conf.get('enumerator_workers', 10)
+        self.enumerator_pool = eventlet.GreenPool(self.enumerator_workers)
+        self.enumerator_queue = eventlet.queue.Queue(self.enumerator_workers)
+
+        for _ in xrange(self.enumerator_workers):
+            self.enumerator_pool.spawn_n(self._enumerator)
 
     def _init_ic_pool(self, conf):
         pool_size = self.workers
@@ -86,40 +139,72 @@ class ContainerCrawler(object):
                 continue
 
             try:
-                if work:
-                    row, handler = work
-                    with self._swift_pool.item() as swift_client:
-                        handler.handle(row, swift_client)
+                if not work:
+                    break
+
+                (row, handler), container_job = work
+                with self._swift_pool.item() as swift_client:
+                    handler.handle(row, swift_client)
+                container_job.complete_task()
             except RetryError:
-                self.error_queue.put((row, None))
+                container_job.complete_task(retry=True)
             except:
-                self.error_queue.put((row, traceback.format_exc()))
+                container_job.complete_task(error=True)
+                self.log('error', u'Failed to handle row %s (%s): %r' % (
+                    row['ROWID'], row['name'].decode('utf-8'),
+                    traceback.format_exc()))
             finally:
                 self.work_queue.task_done()
 
-    def _stop(self):
-        for _ in xrange(self.workers):
-            self.work_queue.put(None)
-        self.pool.waitall()
+    def _enumerator(self):
+        job = ContainerJob()
+        while 1:
+            try:
+                work = self.enumerator_queue.get()
+            except:
+                self.log(
+                    'error', 'Failed to fetch containers to enumerate %s' %
+                    traceback.format_exc())
+                time.sleep(100)
+                continue
 
-    def _check_errors(self):
-        # When working in bulk, errors are propagated immediately
-        if self.bulk or self.error_queue.empty():
-            return
+            try:
+                if not work:
+                    break
 
-        retry_error = False
+                settings, per_account = work
+                handler = self.handler_class(self.status_dir, settings,
+                                             per_account=per_account)
+                owned, verified, last_row, db_id = self.handle_container(
+                    handler, job)
+                if not owned and not verified:
+                    continue
 
-        while not self.error_queue.empty():
-            row, error = self.error_queue.get()
-            if error:
-                self.log('error', u'Failed to handle row %s (%s): %r' % (
-                    row['ROWID'], row['name'].decode('utf-8'), error))
-            else:
-                retry_error = True
-        if not retry_error:
-            raise RuntimeError('Failed to process rows')
-        else:
-            raise RetryError('Rows must be retried later')
+                if self.bulk or job.wait_all() == ContainerJob.PASS_SUCCEEDED:
+                    handler.save_last_row(last_row, db_id)
+                    self.log('info',
+                             'Processed %d rows; verified %d rows; '
+                             'last row: %d' % (owned, verified, last_row))
+            except SkipContainer:
+                self.log(
+                    'info', "Skipping %(account)s/%(container)s" % settings)
+            except RetryError:
+                # Can appear from the bulk handling code.
+                # TODO: we should do a better tying the bulk handling code into
+                # this model.
+                pass
+            except:
+                account = settings['account']
+                container = settings['container']
+                self.log('error', "Failed to process %s/%s with %s" % (
+                    account, container,
+                    self.handler_class.__name__))
+                self.log('error', traceback.format_exc())
+            finally:
+                if work:
+                    self._in_progress_containers.remove(
+                        (work[0]['account'], work[0]['container']))
+                self.enumerator_queue.task_done()
 
     def log(self, level, message):
         if not self.logger:
@@ -133,29 +218,30 @@ class ContainerCrawler(object):
                                db_hash + '.db')
         return ContainerBroker(db_path, account=account, container=container)
 
-    def submit_items(self, handler, rows):
+    def submit_items(self, handler, rows, job):
+        if not rows:
+            return
+
         if self.bulk:
             with self._swift_pool.item() as swift_client:
                 handler.handle(rows, swift_client)
             return
 
-        for row in rows:
-            self.work_queue.put((row, handler))
-        self.work_queue.join()
+        job.submit_tasks(map(lambda row: (row, handler), rows),
+                         self.work_queue)
 
-    def process_items(self, handler, rows, nodes_count, node_id):
+    def process_items(self, handler, rows, nodes_count, node_id, job):
         owned_rows = filter(
             lambda row: row['ROWID'] % nodes_count == node_id, rows)
-        self.submit_items(handler, owned_rows)
-
         verified_rows = filter(
             lambda row: row['ROWID'] % nodes_count != node_id, rows)
-        if verified_rows:
-            self.submit_items(handler, verified_rows)
-        self._check_errors()
+
+        self.submit_items(handler, owned_rows, job)
+        self.submit_items(handler, verified_rows, job)
+
         return len(owned_rows), len(verified_rows)
 
-    def handle_container(self, handler):
+    def handle_container(self, handler, job):
         part, container_nodes = self.container_ring.get_nodes(
             handler._account.encode('utf-8'),
             handler._container.encode('utf-8'))
@@ -176,45 +262,22 @@ class ContainerCrawler(object):
                 items = broker.get_items_since(last_row, self.items_chunk)
             except DatabaseConnectionError:
                 continue
-            if items:
-                self.log(
-                    'info',
-                    'Processing %d rows since row %d for %s/%s' % (
-                        len(items),
-                        last_row,
-                        handler._account,
-                        handler._container))
-                owned_count, verified_count = self.process_items(
-                    handler, items, nodes_count, index)
-                handler.save_last_row(items[-1]['ROWID'], broker_info['id'])
-                self.log(
-                    'info',
-                    'Processed %d rows; verified %d rows; last row: %d' % (
-                        owned_count, verified_count, items[-1]['ROWID']))
 
-    def call_handle_container(self, settings, per_account=False):
-        """ Thin wrapper around the handle_container() method for error
-            handling.
+            if not items:
+                return (0, 0, None, broker_info['id'])
 
-            Arguments
-            settings -- dictionary with settings used for the
-            per_account -- whether the whole account is crawled.
-        """
-        try:
-            handler = self.handler_class(self.status_dir, settings,
-                                         per_account=per_account)
-            self.handle_container(handler)
-        except SkipContainer:
-            self.log('info', "Skipping %(account)s/%(container)s" % settings)
-        except RetryError:
-            pass
-        except:
-            account = settings['account']
-            container = settings['container']
-            self.log('error', "Failed to process %s/%s with %s" % (
-                account, container,
-                self.handler_class.__name__))
-            self.log('error', traceback.format_exc())
+            self.log('info',
+                     'Processing %d rows since row %d for %s/%s' % (
+                         len(items), last_row, handler._account,
+                         handler._container))
+            owned_count, verified_count = self.process_items(
+                handler, items, nodes_count, index, job)
+
+            return (owned_count,
+                    verified_count,
+                    items[-1]['ROWID'],
+                    broker_info['id'])
+        return (0, 0, None, None)
 
     def list_containers(self, account):
         # TODO: we should not have to retrieve all of the containers at once,
@@ -225,20 +288,18 @@ class ContainerCrawler(object):
         with self._swift_pool.item() as swift_client:
             return [c['name'] for c in swift_client.iter_containers(account)]
 
-    def run_always(self):
-        # Since we don't support reloading, the daemon should quit if there are
-        # no containers configured
-        if 'containers' not in self.conf or not self.conf['containers']:
-            return
-        self.log('debug', 'Entering the poll loop')
-        while True:
-            start = time.time()
-            self.run_once()
-            elapsed = time.time() - start
-            if elapsed < self.poll_interval:
-                time.sleep(self.poll_interval - elapsed)
+    def _is_processing(self, settings):
+        # NOTE: if we allow more than one destination for (account, container),
+        # we have to change the contents of this set
+        key = (settings['account'], settings['container'])
+        return key in self._in_progress_containers
 
-    def run_once(self):
+    def _enqueue_container(self, settings, per_account=False):
+        key = (settings['account'], settings['container'])
+        self._in_progress_containers.add(key)
+        self.enumerator_queue.put((settings, per_account))
+
+    def _submit_containers(self):
         for container_settings in self.conf['containers']:
             # TODO: perform validation of the settings on startup
             if 'container' not in container_settings:
@@ -249,7 +310,7 @@ class ContainerCrawler(object):
             if 'account' not in container_settings:
                 self.log(
                     'error',
-                    'Account not in specified in settings -- continue')
+                    'Account not specified in settings -- continue')
                 continue
 
             if container_settings['container'] == '/*':
@@ -258,7 +319,9 @@ class ContainerCrawler(object):
                 for container in all_containers:
                     settings_copy = container_settings.copy()
                     settings_copy['container'] = container.decode('utf-8')
-                    self.call_handle_container(settings_copy, per_account=True)
+                    if not self._is_processing(settings_copy):
+                        self._enqueue_container(
+                            settings_copy, per_account=True)
                 # After iterating over all of the containers, we prune any
                 # entries from containers that may have been deleted (so as to
                 # avoid missing data). There is still a chance where a
@@ -284,4 +347,23 @@ class ContainerCrawler(object):
                                 os.path.join(container_settings['account'],
                                              container), repr(e)))
             else:
-                self.call_handle_container(container_settings)
+                if not self._is_processing(container_settings):
+                    self._enqueue_container(container_settings,
+                                            per_account=False)
+
+    def run_always(self):
+        # Since we don't support reloading, the daemon should quit if there are
+        # no containers configured
+        if 'containers' not in self.conf or not self.conf['containers']:
+            return
+        self.log('debug', 'Entering the poll loop')
+        while True:
+            start = time.time()
+            self._submit_containers()
+            elapsed = time.time() - start
+            if elapsed < self.poll_interval:
+                time.sleep(self.poll_interval - elapsed)
+
+    def run_once(self):
+        self._submit_containers()
+        self.enumerator_queue.join()
