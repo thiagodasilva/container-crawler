@@ -254,7 +254,16 @@ class ContainerCrawler(object):
             broker = self.get_broker(handler._account,
                                      handler._container,
                                      part, node)
-            broker_info = broker.get_info()
+            try:
+                broker_info = broker.get_info()
+            except DatabaseConnectionError:
+                self.logger.info(
+                    'Skipping %s/%s. Container database not found in device:'
+                    ' %s, part: %s.' % (
+                        handler._account, handler._container,
+                        node['device'], part))
+                continue
+
             last_row = handler.get_last_row(broker_info['id'])
             if not last_row:
                 last_row = 0

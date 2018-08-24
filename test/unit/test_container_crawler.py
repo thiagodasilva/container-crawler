@@ -7,6 +7,7 @@ import unittest
 
 from container_crawler import RetryError
 from container_crawler.base_sync import BaseSync
+from swift.common.db import DatabaseConnectionError
 
 
 class TestContainerCrawler(unittest.TestCase):
@@ -257,6 +258,38 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(expected_logger_calls,
                          self.crawler.logger.error.call_args_list)
 
+    def test_container_not_found(self):
+        fake_node = {'ip': '127.0.0.1', 'port': 1337, 'device': '/dev/sdb1'}
+        part = 'deadbeef'
+        self.mock_ring.get_nodes.return_value = (part, [fake_node])
+
+        broker = mock.Mock()
+        broker.get_info.side_effect = DatabaseConnectionError(
+            "/path/to/db", "DB doesn't exist")
+        self.crawler.get_broker = mock.Mock()
+        self.crawler.get_broker.return_value = broker
+
+        self.crawler.process_items = mock.Mock()
+        self.crawler.process_items.side_effect = RetryError
+
+        self.crawler.conf['containers'] = [
+            {'account': 'foo',
+             'container': 'bar'}
+        ]
+
+        self.crawler.logger = mock.Mock()
+        handler_instance = mock.Mock()
+        handler_instance._account = 'foo'
+        handler_instance._container = 'bar'
+        self.mock_handler.return_value = handler_instance
+
+        self.crawler.run_once()
+        self.crawler.logger.assert_has_calls([
+            mock.call.info(
+                'Skipping foo/bar. Container database not found in device:'
+                ' /dev/sdb1, part: deadbeef.')
+        ])
+
     def test_processes_every_container(self):
         self.crawler.handle_container = mock.Mock()
         self.crawler.conf['containers'] = [
@@ -270,8 +303,8 @@ class TestContainerCrawler(unittest.TestCase):
         expected_calls = [mock.call(self.conf['status_dir'],
                                     container, per_account=False)
                           for container in self.crawler.conf['containers']]
-        self.assertEquals(expected_calls,
-                          self.mock_handler.call_args_list)
+        self.assertEqual(expected_calls,
+                         self.mock_handler.call_args_list)
 
     @mock.patch('os.path.exists')
     @mock.patch('container_crawler.ContainerBroker')
