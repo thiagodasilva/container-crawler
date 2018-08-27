@@ -1,8 +1,17 @@
+## 0.0.14 (2018-08-27)
+
+Improvements:
+
+    - Add an option to crawl containers in parallel. This allows handling
+      configurations and accounts with 1000s of containers. The
+      `enumerator_workers` option controls how many containers are handled in
+      parallel and defaults to 10.
+
 ## 0.0.13 (2018-04-02)
 
 Bug fixes:
 
-    - Configuration files can now explicitly set bulk_process to false to turn
+    - Configuration files can now explicitly set `bulk_process` to false to turn
       off bulk processing. Previously this was only possible by omitting the
       config value entirely.
     - Running with bulk processing enabled no longer raises AttributeErrors
