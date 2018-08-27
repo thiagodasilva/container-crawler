@@ -135,7 +135,7 @@ class ContainerCrawler(object):
                 self.log(
                     'error', 'Failed to fetch items from the queue: %s' %
                     traceback.format_exc())
-                time.sleep(100)
+                eventlet.sleep(100)
                 continue
 
             try:
@@ -165,7 +165,7 @@ class ContainerCrawler(object):
                 self.log(
                     'error', 'Failed to fetch containers to enumerate %s' %
                     traceback.format_exc())
-                time.sleep(100)
+                eventlet.sleep(100)
                 continue
 
             try:
@@ -362,7 +362,7 @@ class ContainerCrawler(object):
             self._submit_containers()
             elapsed = time.time() - start
             if elapsed < self.poll_interval:
-                time.sleep(self.poll_interval - elapsed)
+                eventlet.sleep(self.poll_interval - elapsed)
 
     def run_once(self):
         self._submit_containers()
