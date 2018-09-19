@@ -1,3 +1,10 @@
+## 0.0.15 (2018-09-19)
+
+Bug fixes:
+
+    - Fixed a deadlock introduced in 0.0.14, which blocks progress when there
+      are more items to upload than worker threads.
+
 ## 0.0.14 (2018-08-27)
 
 Improvements:
