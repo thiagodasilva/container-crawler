@@ -62,8 +62,8 @@ class ContainerJob(object):
     def submit_tasks(self, tasks, work_queue):
         with self._lock:
             self._outstanding += len(tasks)
-            for task in tasks:
-                work_queue.put((task, self))
+        for task in tasks:
+            work_queue.put((task, self))
 
     def complete_task(self, error=False, retry=False):
         with self._lock:

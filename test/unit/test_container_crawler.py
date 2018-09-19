@@ -30,7 +30,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.container_job = container_crawler.ContainerJob()
 
     def test_process_items(self):
-        total_rows = 20
+        total_rows = 100
         items = [{'ROWID': x} for x in range(0, total_rows)]
 
         for nodes in range(1, 7):
