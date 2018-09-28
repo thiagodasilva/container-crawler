@@ -254,6 +254,8 @@ class ContainerCrawler(object):
             broker = self.get_broker(handler._account,
                                      handler._container,
                                      part, node)
+            if broker.is_deleted():
+                continue
             broker_info = broker.get_info()
             last_row = handler.get_last_row(broker_info['id'])
             if not last_row:

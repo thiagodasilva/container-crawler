@@ -288,6 +288,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_ic.iter_containers.return_value = [
             {'name': container} for container in test_containers]
         ls_mock.return_value = test_containers
+        broker_mock.return_value.is_deleted.return_value = False
         broker_mock.return_value.get_items_since.return_value = []
         broker_mock.return_value.get_info.return_value = {'id': 12345}
 
@@ -313,6 +314,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_ic.iter_containers.assert_called_once_with(account)
         expected = [
             (mock.call(mock.ANY, account=account, container=container),
+             mock.call().is_deleted(),
              mock.call().get_info(),
              mock.call().get_items_since(42, 1000))
             for container in test_containers]
@@ -358,6 +360,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_ring.get_nodes.return_value = (part, [fake_node])
 
         broker = mock.Mock()
+        broker.is_deleted.return_value = False
         broker.get_info.return_value = {'id': 12345}
         rows = [{'name': 'foo'}]
         broker.get_items_since.return_value = rows
@@ -392,8 +395,6 @@ class TestContainerCrawler(unittest.TestCase):
                             'ip': '127.0.0.1',
                             'device': '/dev/foo'}])
 
-        broker_class = 'container_crawler.ContainerBroker'
-
         fake_handler = mock.Mock(spec=BaseSync)
         fake_handler._account = settings['account']
         fake_handler._container = settings['container']
@@ -401,11 +402,14 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_handler.return_value = fake_handler
         self.crawler.conf = {'containers': [settings]}
 
-        with mock.patch('%s.get_info' % broker_class) as info_mock, \
-                mock.patch('%s.get_items_since' % broker_class) as items_mock:
-            info_mock.return_value = {'id': 'deadbeef'}
-            items_mock.return_value = [{'name': 'object', 'ROWID': 42}]
+        fake_broker = mock.Mock()
+        fake_broker.is_deleted.return_value = False
+        fake_broker.get_info.return_value = {'id': 'deadbeef'}
+        fake_broker.get_items_since.return_value = [
+            {'name': 'object', 'ROWID': 42}]
 
+        with mock.patch('container_crawler.ContainerBroker',
+                        return_value=fake_broker):
             self.crawler.run_once()
 
         self.assertEqual(
@@ -560,4 +564,26 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler._submit_containers()
         self.crawler.enumerator_queue.join()
         self.crawler.logger.error.assert_not_called()
+        self.mock_handler.return_value.save_last_row.assert_not_called()
+
+    def test_skip_missing_containers(self):
+        # NB: covers both db-file-is-not-on-disk and db-file-is-marked-deleted
+
+        broker = mock.Mock()
+        broker.is_deleted.return_value = True
+        self.crawler.get_broker = mock.Mock(return_value=broker)
+
+        fake_node = {'ip': '127.0.0.1', 'port': 1337}
+        part = 'deadbeef'
+        self.mock_ring.get_nodes.return_value = (part, [fake_node])
+        self.crawler.conf['containers'] = [
+            {'account': 'foo',
+             'container': 'bar'},
+            {'account': 'foo',
+             'container': 'baz'}]
+        self.crawler.logger = mock.Mock()
+
+        self.crawler._submit_containers()
+        self.crawler.enumerator_queue.join()
+        self.assertEqual([], self.crawler.logger.error.mock_calls)
         self.mock_handler.return_value.save_last_row.assert_not_called()
