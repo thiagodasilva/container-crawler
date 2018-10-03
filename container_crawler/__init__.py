@@ -4,6 +4,7 @@ eventlet.patcher.monkey_patch(all=True)
 
 import os.path
 import time
+import threading
 import traceback
 
 from swift.common.db import DatabaseConnectionError
@@ -36,8 +37,8 @@ class ContainerJob(object):
     def __init__(self):
         # The Queue is only used to mimic a condition variable, so that we can
         # block on tasks being completed.
-        self._done = eventlet.queue.Queue()
-        self._lock = eventlet.semaphore.Semaphore(1)
+        self._lock = threading.Lock()
+        self._done = threading.Condition(self._lock)
         self._reset()
 
     def _reset(self):
@@ -52,12 +53,14 @@ class ContainerJob(object):
            holding the lock here, we are not guarding against another thread
            submitting tasks!
         '''
-        self._done.get()
-        # At some point we may want to differentiate RetryError vs all other
-        # errors.
-        ret = not self._retry and not self._error
-        self._reset()
-        return self.PASS_SUCCEEDED if ret else self.PASS_FAILED
+        with self._lock:
+            while self._outstanding != 0:
+                self._done.wait()
+            # At some point we may want to differentiate RetryError vs all
+            # other errors.
+            ret = not self._retry and not self._error
+            self._reset()
+            return self.PASS_SUCCEEDED if ret else self.PASS_FAILED
 
     def submit_tasks(self, tasks, work_queue):
         with self._lock:
@@ -73,7 +76,7 @@ class ContainerJob(object):
             if retry and not self._retry:
                 self._retry = retry
             if self._outstanding == 0:
-                self._done.put(None)
+                self._done.notify()
 
 
 class ContainerCrawler(object):
@@ -175,23 +178,42 @@ class ContainerCrawler(object):
                 settings, per_account = work
                 handler = self.handler_class(self.status_dir, settings,
                                              per_account=per_account)
-                owned, verified, last_row, db_id = self.handle_container(
-                    handler, job)
-                if not owned and not verified:
+                primary_rows, verifying_rows, start_row, last_row, db_id =\
+                    self.find_new_rows(handler)
+
+                if not primary_rows and not verifying_rows:
                     continue
 
-                if self.bulk or job.wait_all() == ContainerJob.PASS_SUCCEEDED:
+                if primary_rows:
+                    self.log(
+                        'info', 'Processing %d rows since row %d for %s/%s' % (
+                            len(primary_rows), start_row, handler._account,
+                            handler._container))
+                primary_rows_status = self.submit_items(
+                    handler, primary_rows, job)
+
+                if verifying_rows:
+                    self.log(
+                        'info', 'Verifying %d rows since row %d for %s/%s' % (
+                            len(verifying_rows), start_row, handler._account,
+                            handler._container))
+                verifying_rows_status = self.submit_items(
+                    handler, verifying_rows, job)
+
+                if self.bulk or (ContainerJob.PASS_SUCCEEDED ==
+                                 primary_rows_status == verifying_rows_status):
                     handler.save_last_row(last_row, db_id)
-                    self.log('info',
-                             'Processed %d rows; verified %d rows; '
-                             'last row: %d' % (owned, verified, last_row))
+                    self.log(
+                        'info',
+                        'Processed %d rows; verified %d rows; last row: %d' % (
+                            len(primary_rows), len(verifying_rows), last_row))
             except SkipContainer:
                 self.log(
                     'info', "Skipping %(account)s/%(container)s" % settings)
             except RetryError:
                 # Can appear from the bulk handling code.
-                # TODO: we should do a better tying the bulk handling code into
-                # this model.
+                # TODO: we should do a better job tying the bulk handling code
+                # into this model.
                 pass
             except:
                 account = settings['account']
@@ -220,28 +242,18 @@ class ContainerCrawler(object):
 
     def submit_items(self, handler, rows, job):
         if not rows:
-            return
+            return ContainerJob.PASS_SUCCEEDED
 
         if self.bulk:
             with self._swift_pool.item() as swift_client:
                 handler.handle(rows, swift_client)
-            return
+            return ContainerJob.PASS_SUCCEEDED
 
         job.submit_tasks(map(lambda row: (row, handler), rows),
                          self.work_queue)
+        return job.wait_all()
 
-    def process_items(self, handler, rows, nodes_count, node_id, job):
-        owned_rows = filter(
-            lambda row: row['ROWID'] % nodes_count == node_id, rows)
-        verified_rows = filter(
-            lambda row: row['ROWID'] % nodes_count != node_id, rows)
-
-        self.submit_items(handler, owned_rows, job)
-        self.submit_items(handler, verified_rows, job)
-
-        return len(owned_rows), len(verified_rows)
-
-    def handle_container(self, handler, job):
+    def find_new_rows(self, handler):
         part, container_nodes = self.container_ring.get_nodes(
             handler._account.encode('utf-8'),
             handler._container.encode('utf-8'))
@@ -266,20 +278,21 @@ class ContainerCrawler(object):
                 continue
 
             if not items:
-                return (0, 0, None, broker_info['id'])
+                return ([], [], None, None, broker_info['id'])
 
-            self.log('info',
-                     'Processing %d rows since row %d for %s/%s' % (
-                         len(items), last_row, handler._account,
-                         handler._container))
-            owned_count, verified_count = self.process_items(
-                handler, items, nodes_count, index, job)
-
-            return (owned_count,
-                    verified_count,
+            primary_rows = []
+            verifying_rows = []
+            for row in items:
+                if row['ROWID'] % nodes_count == index:
+                    primary_rows.append(row)
+                else:
+                    verifying_rows.append(row)
+            return (primary_rows,
+                    verifying_rows,
+                    last_row,
                     items[-1]['ROWID'],
                     broker_info['id'])
-        return (0, 0, None, None)
+        return ([], [], None, None, None)
 
     def list_containers(self, account):
         # TODO: we should not have to retrieve all of the containers at once,
