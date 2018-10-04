@@ -7,11 +7,10 @@ import time
 import threading
 import traceback
 
-from swift.common.db import DatabaseConnectionError
 from swift.common.ring import Ring
 from swift.common.ring.utils import is_local_device
-from swift.common.utils import whataremyips, hash_path, storage_directory, \
-    config_true_value
+from swift.common.utils import config_true_value, decode_timestamps,\
+    hash_path, storage_directory, whataremyips
 
 from swift.container.backend import DATADIR, ContainerBroker
 
@@ -95,6 +94,8 @@ class ContainerCrawler(object):
         self.status_dir = conf['status_dir']
         self.myips = whataremyips('0.0.0.0')
         self.items_chunk = conf['items_chunk']
+        # Verification slack is specified in minutes.
+        self._verification_slack = conf.get('verification_slack', 0) * 60
         self.poll_interval = conf.get('poll_interval', 5)
         self.handler_class = handler_class
         self._in_progress_containers = set()
@@ -159,6 +160,19 @@ class ContainerCrawler(object):
             finally:
                 self.work_queue.task_done()
 
+    def _get_new_rows(self, broker, start_row, nodes, node_id, verifying):
+        rows = []
+        if verifying:
+            cutoff = time.time() - self._verification_slack
+        for row in broker.get_items_since(start_row, self.items_chunk):
+            if not verifying and row['ROWID'] % nodes != node_id:
+                continue
+            ts = decode_timestamps(row['created_at'])[2].timestamp
+            if verifying and ts > cutoff:
+                break
+            rows.append(row)
+        return rows
+
     def _enumerator(self):
         job = ContainerJob()
         while 1:
@@ -176,37 +190,65 @@ class ContainerCrawler(object):
                     break
 
                 settings, per_account = work
-                handler = self.handler_class(self.status_dir, settings,
-                                             per_account=per_account)
-                primary_rows, verifying_rows, start_row, last_row, db_id =\
-                    self.find_new_rows(handler)
-
-                if not primary_rows and not verifying_rows:
+                # Should we try caching the broker to avoid doing these
+                # look ups every time?
+                broker, nodes_count, node_id = self.get_broker(
+                    settings['account'].encode('utf-8'),
+                    settings['container'].encode('utf-8'))
+                if not broker:
                     continue
 
+                broker_id = broker.get_info()['id']
+                handler = self.handler_class(self.status_dir, settings,
+                                             per_account=per_account)
+
+                last_primary_row = handler.get_last_processed_row(broker_id)
+                primary_rows = self._get_new_rows(
+                    broker, last_primary_row, nodes_count, node_id, False)
                 if primary_rows:
                     self.log(
                         'info', 'Processing %d rows since row %d for %s/%s' % (
-                            len(primary_rows), start_row, handler._account,
-                            handler._container))
-                primary_rows_status = self.submit_items(
-                    handler, primary_rows, job)
+                            len(primary_rows), last_primary_row,
+                            settings['account'], settings['container']))
+                    primary_status = self.submit_items(
+                        handler, primary_rows, job)
+                    if ContainerJob.PASS_SUCCEEDED == primary_status:
+                        handler.save_last_processed_row(
+                            primary_rows[-1]['ROWID'], broker_id)
+                        self.log(
+                            'info',
+                            'Processed %d rows; last row: %d; for %s/%s' % (
+                                len(primary_rows), primary_rows[-1]['ROWID'],
+                                settings['account'], settings['container']))
+
+                last_verified_row = handler.get_last_verified_row(broker_id)
+                verifying_rows = self._get_new_rows(
+                    broker, last_verified_row, nodes_count, node_id, True)
+
+                # Remove any ROWIDs that we uploaded
+                uploaded_rows = set([row['ROWID'] for row in primary_rows])
+                verifying_rows = filter(
+                    lambda row: row['ROWID'] not in uploaded_rows,
+                    verifying_rows)
 
                 if verifying_rows:
                     self.log(
                         'info', 'Verifying %d rows since row %d for %s/%s' % (
-                            len(verifying_rows), start_row, handler._account,
-                            handler._container))
-                verifying_rows_status = self.submit_items(
-                    handler, verifying_rows, job)
+                            len(verifying_rows), last_verified_row,
+                            settings['account'], settings['container']))
+                    verifying_status = self.submit_items(
+                        handler, verifying_rows, job)
+                    if ContainerJob.PASS_SUCCEEDED == verifying_status:
+                        handler.save_last_verified_row(
+                            verifying_rows[-1]['ROWID'], broker_id)
+                        self.log('info',
+                                 'Verified %d rows; last row: %d; '
+                                 'for %s/%s' % (
+                                     len(verifying_rows),
+                                     verifying_rows[-1]['ROWID'],
+                                     settings['account'],
+                                     settings['container']))
 
-                if self.bulk or (ContainerJob.PASS_SUCCEEDED ==
-                                 primary_rows_status == verifying_rows_status):
-                    handler.save_last_row(last_row, db_id)
-                    self.log(
-                        'info',
-                        'Processed %d rows; verified %d rows; last row: %d' % (
-                            len(primary_rows), len(verifying_rows), last_row))
             except SkipContainer:
                 self.log(
                     'info', "Skipping %(account)s/%(container)s" % settings)
@@ -233,12 +275,30 @@ class ContainerCrawler(object):
             return
         getattr(self.logger, level)(message)
 
-    def get_broker(self, account, container, part, node):
-        db_hash = hash_path(account.encode('utf-8'), container.encode('utf-8'))
+    def get_broker(self, account, container):
+        """Instatiates a container database broker.
+
+        :param account: UTF-8 encoded account name
+        :param container: UTF-8 encoded container name
+        :returns: ContainerBroker (or None if the DB cannot be found)
+        """
+        part, container_nodes = self.container_ring.get_nodes(
+            account, container)
+        nodes_count = len(container_nodes)
+        db_hash = hash_path(account, container)
         db_dir = storage_directory(DATADIR, part, db_hash)
-        db_path = os.path.join(self.root, node['device'], db_dir,
-                               db_hash + '.db')
-        return ContainerBroker(db_path, account=account, container=container)
+
+        for index, node in enumerate(container_nodes):
+            if not is_local_device(self.myips, None, node['ip'],
+                                   node['port']):
+                continue
+            db_path = os.path.join(
+                self.root, node['device'], db_dir, db_hash + '.db')
+            broker = ContainerBroker(
+                db_path, account=account, container=container)
+            if not broker.is_deleted():
+                return broker, nodes_count, index
+        return None, None, None
 
     def submit_items(self, handler, rows, job):
         if not rows:
@@ -252,47 +312,6 @@ class ContainerCrawler(object):
         job.submit_tasks(map(lambda row: (row, handler), rows),
                          self.work_queue)
         return job.wait_all()
-
-    def find_new_rows(self, handler):
-        part, container_nodes = self.container_ring.get_nodes(
-            handler._account.encode('utf-8'),
-            handler._container.encode('utf-8'))
-        nodes_count = len(container_nodes)
-
-        for index, node in enumerate(container_nodes):
-            if not is_local_device(self.myips, None, node['ip'],
-                                   node['port']):
-                continue
-            broker = self.get_broker(handler._account,
-                                     handler._container,
-                                     part, node)
-            if broker.is_deleted():
-                continue
-            broker_info = broker.get_info()
-            last_row = handler.get_last_row(broker_info['id'])
-            if not last_row:
-                last_row = 0
-            try:
-                items = broker.get_items_since(last_row, self.items_chunk)
-            except DatabaseConnectionError:
-                continue
-
-            if not items:
-                return ([], [], None, None, broker_info['id'])
-
-            primary_rows = []
-            verifying_rows = []
-            for row in items:
-                if row['ROWID'] % nodes_count == index:
-                    primary_rows.append(row)
-                else:
-                    verifying_rows.append(row)
-            return (primary_rows,
-                    verifying_rows,
-                    last_row,
-                    items[-1]['ROWID'],
-                    broker_info['id'])
-        return ([], [], None, None, None)
 
     def list_containers(self, account):
         # TODO: we should not have to retrieve all of the containers at once,

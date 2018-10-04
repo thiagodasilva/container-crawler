@@ -35,8 +35,14 @@ class BaseSync(object):
     def handle(self, rows, swift_client):
         raise NotImplementedError
 
-    def get_last_row(self, db_id):
+    def get_last_processed_row(self, db_id):
         raise NotImplementedError
 
-    def save_last_row(self, row_id, db_id):
+    def save_last_processed_row(self, row_id, db_id):
+        raise NotImplementedError
+
+    def get_last_verified_row(self, db_id):
+        raise NotImplementedError
+
+    def save_last_verified_row(self, row_id, db_id):
         raise NotImplementedError
