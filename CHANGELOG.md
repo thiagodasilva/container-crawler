@@ -1,3 +1,15 @@
+## 0.0.16 (2018-10-07)
+
+Improvements:
+
+    - Added a `verification_slack` parameter that can defer verification by a
+      specific number of minutes.
+
+Bug fixes:
+
+    - Fixed an issue where verified and primary objects were processed at the
+      same time.
+
 ## 0.0.15 (2018-09-19)
 
 Bug fixes:
