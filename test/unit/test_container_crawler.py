@@ -373,7 +373,7 @@ class TestContainerCrawler(unittest.TestCase):
             {'account': account,
              'container': '/*'}
         ]
-        test_containers = ['foo', 'bar', 'baz']
+        test_containers = ['foo', 'bar', 'baz', u'fo\u00f4']
 
         self.mock_ic.iter_containers.return_value = [
             {'name': container} for container in test_containers]
@@ -641,10 +641,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.conf['containers'] = [
             {'account': u'fo\u00f2',
              'container': '/*'}]
-        self.crawler.list_containers = mock.Mock(return_value=[
-            container.encode('utf-8')
-            for container in containers
-        ])
+        self.crawler.list_containers = mock.Mock(return_value=containers)
 
         self.crawler._submit_containers()
         self.assertEqual(2, self.crawler.enumerator_queue.unfinished_tasks)

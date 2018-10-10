@@ -352,7 +352,7 @@ class ContainerCrawler(object):
                     container_settings['account'])
                 for container in all_containers:
                     settings_copy = container_settings.copy()
-                    settings_copy['container'] = container.decode('utf-8')
+                    settings_copy['container'] = container
                     if not self._is_processing(settings_copy):
                         self._enqueue_container(
                             settings_copy, per_account=True)
