@@ -1,3 +1,15 @@
+## 0.0.17 (2018-10-12)
+
+Improvements:
+
+- Changes the interface to accept a factory object rather than a class to
+  instantiate the handler for each row (or batch of rows).
+
+Bug fixes:
+
+- Fixes handling of containers with non-ASCII characters when configured to
+  process all containers in an account.
+
 ## 0.0.16 (2018-10-07)
 
 Improvements:
