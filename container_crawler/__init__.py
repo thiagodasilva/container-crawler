@@ -363,21 +363,18 @@ class ContainerCrawler(object):
                 # CloudSync, however there is nothing we can do about that.
                 # TODO: keep track of container creation date to detect when
                 # they are removed and then added.
-                if not os.path.exists(os.path.join(
-                        self.status_dir, container_settings['account'])):
+                account_status_dir = os.path.join(
+                    self.status_dir, container_settings['account']
+                ).encode('utf-8')
+                if not os.path.exists(account_status_dir):
                     continue
-                tracked_containers = os.listdir(os.path.join(
-                    self.status_dir, container_settings['account'])
-                    .encode('utf-8'))
+                tracked_containers = os.listdir(account_status_dir)
                 disappeared = set(tracked_containers) - set(
                     map(lambda container: container.encode('utf-8'),
                         all_containers))
                 for container in disappeared:
                     try:
-                        os.unlink(os.path.join(
-                            self.status_dir.encode('utf-8'),
-                            container_settings['account'].encode('utf-8'),
-                            container))
+                        os.unlink(os.path.join(account_status_dir, container))
                     except Exception as e:
                         self.log(
                             'warning',
