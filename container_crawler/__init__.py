@@ -367,13 +367,17 @@ class ContainerCrawler(object):
                         self.status_dir, container_settings['account'])):
                     continue
                 tracked_containers = os.listdir(os.path.join(
-                    self.status_dir, container_settings['account']))
-                disappeared = set(tracked_containers) - set(all_containers)
+                    self.status_dir, container_settings['account'])
+                    .encode('utf-8'))
+                disappeared = set(tracked_containers) - set(
+                    map(lambda container: container.encode('utf-8'),
+                        all_containers))
                 for container in disappeared:
                     try:
-                        os.unlink(os.path.join(self.status_dir,
-                                               container_settings['account'],
-                                               container))
+                        os.unlink(os.path.join(
+                            self.status_dir.encode('utf-8'),
+                            container_settings['account'].encode('utf-8'),
+                            container))
                     except Exception as e:
                         self.log(
                             'warning',

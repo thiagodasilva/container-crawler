@@ -424,26 +424,28 @@ class TestContainerCrawler(unittest.TestCase):
     @mock.patch('os.path.exists')
     @mock.patch('os.unlink')
     @mock.patch('os.listdir')
-    def test_removes_missing_directories(self, ls_mock, unlink_mock,
-                                         exists_mock):
-        account = 'foo'
+    def test_removes_missing_status_files(self, ls_mock, unlink_mock,
+                                          exists_mock):
+        account = u'fo\u00ef'
         self.crawler.conf['containers'] = [
             {'account': account,
              'container': '/*'}
         ]
-        test_containers = ['foo', 'bar', 'baz']
+        test_containers = [u'foo', u'bar', u'baz', u'unic\u062fde']
 
         self.mock_ic.iter_containers.return_value = []
-        ls_mock.return_value = test_containers
+        ls_mock.return_value = [container.encode('utf-8')
+                                for container in test_containers]
         exists_mock.return_value = True
 
         self.crawler.run_once()
 
         self.mock_ic.iter_containers.assert_called_once_with(account)
         ls_mock.assert_called_once_with(
-            '%s/%s' % (self.conf['status_dir'], account))
+            ('%s/%s' % (self.conf['status_dir'], account)).encode('utf-8'))
         self.assertEqual([
-            mock.call('%s/%s/%s' % (self.conf['status_dir'], account, cont))
+            mock.call(('%s/%s/%s' % (self.conf['status_dir'], account, cont))
+                      .encode('utf-8'))
             for cont in sorted(test_containers)],
             sorted(unlink_mock.mock_calls))
 

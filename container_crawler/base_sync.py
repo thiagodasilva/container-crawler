@@ -27,9 +27,9 @@ class BaseSync(object):
         self._account = settings['account']
         self._container = settings['container']
         self._status_file = os.path.join(self._status_dir, self._account,
-                                         self._container)
+                                         self._container).encode('utf-8')
         self._status_account_dir = os.path.join(self._status_dir,
-                                                self._account)
+                                                self._account).encode('utf-8')
         self._per_account = per_account
 
     def handle(self, rows, swift_client):
