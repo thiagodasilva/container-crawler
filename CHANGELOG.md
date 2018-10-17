@@ -1,3 +1,10 @@
+## 0.0.18 (2018-10-17)
+
+Bug fixes:
+
+- Fixed non-ASCII character handling in container names when the default
+  locale is not set (as oppposed to being UTF-8).
+
 ## 0.0.17 (2018-10-12)
 
 Improvements:
