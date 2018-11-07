@@ -58,7 +58,7 @@ class TestContainerCrawler(unittest.TestCase):
 
     def test_enumerator_worker(self):
         total_rows = 100
-        items = [{'ROWID': x, 'created_at': Timestamp.now()}
+        items = [{'ROWID': x, 'created_at': Timestamp(time.time())}
                  for x in range(total_rows)]
 
         self.mock_broker.get_items_since.return_value = items
@@ -126,7 +126,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(self.crawler.bulk, True)
 
         total_rows = 20
-        items = [{'ROWID': x, 'created_at': Timestamp.now()}
+        items = [{'ROWID': x, 'created_at': Timestamp(time.time())}
                  for x in range(total_rows)]
 
         self.mock_broker.get_items_since.return_value = items
@@ -150,7 +150,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_handler.handle.side_effect = RuntimeError('error')
         self.mock_handler.get_last_row.return_value = 42
         self.mock_broker.get_items_since.return_value = [
-            {'ROWID': 1, 'name': 'foo', 'created_at': Timestamp.now()}]
+            {'ROWID': 1, 'name': 'foo', 'created_at': Timestamp(time.time())}]
         self.crawler.logger = mock.Mock()
 
         with self._patch_broker():
@@ -186,7 +186,8 @@ class TestContainerCrawler(unittest.TestCase):
 
     def test_enumerator_handling_rows_errors(self):
         rows = 10
-        items = [{'ROWID': x, 'name': str(x), 'created_at': Timestamp.now()}
+        items = [{'ROWID': x, 'name': str(x),
+                  'created_at': Timestamp(time.time())}
                  for x in range(rows)]
         self.mock_broker.get_items_since.return_value = items
 
@@ -211,7 +212,8 @@ class TestContainerCrawler(unittest.TestCase):
 
     def test_enumerator_verify_items_errors(self):
         rows = 10
-        items = [{'ROWID': x, 'name': str(x), 'created_at': Timestamp.now()}
+        items = [{'ROWID': x, 'name': str(x),
+                  'created_at': Timestamp(time.time())}
                  for x in range(rows)]
         self.mock_broker.get_items_since.return_value = items
 
@@ -247,7 +249,7 @@ class TestContainerCrawler(unittest.TestCase):
     def test_unicode_object_failure(self, mock_tb):
         row = {'ROWID': 42,
                'name': 'monkey-\xf0\x9f\x90\xb5',
-               'created_at': Timestamp.now()}
+               'created_at': Timestamp(time.time())}
         error = RuntimeError('fail')
         self.mock_handler.handle.side_effect = error
         self.mock_broker.get_items_since.return_value = [row]
@@ -450,7 +452,8 @@ class TestContainerCrawler(unittest.TestCase):
             sorted(unlink_mock.mock_calls))
 
     def test_handle_retry_error(self):
-        rows = [{'name': 'foo', 'ROWID': 1, 'created_at': Timestamp.now()}]
+        rows = [{'name': 'foo', 'ROWID': 1,
+                 'created_at': Timestamp(time.time())}]
         self.mock_broker.get_items_since.return_value = rows
 
         self.crawler.submit_items = mock.Mock()
@@ -479,7 +482,8 @@ class TestContainerCrawler(unittest.TestCase):
             {'account': account,
              'container': container}]
         self.crawler.logger = mock.Mock()
-        row = {'name': 'object', 'ROWID': 1337, 'created_at': Timestamp.now()}
+        row = {'name': 'object', 'ROWID': 1337,
+               'created_at': Timestamp(time.time())}
         self.mock_broker.get_items_since.side_effect = [[row], []]
         self.mock_handler._account = account
         self.mock_handler._container = container
@@ -514,7 +518,7 @@ class TestContainerCrawler(unittest.TestCase):
               'device': '/dev/sda'}])
         rows = [{'ROWID': i,
                  'name': 'obj%d' % i,
-                 'created_at': Timestamp.now()}
+                 'created_at': Timestamp(time.time())}
                 for i in range(80, 100, 2)]
         self.mock_broker.get_items_since.side_effect = ([], rows)
         self.crawler.logger = mock.Mock()
@@ -747,7 +751,7 @@ class TestContainerCrawler(unittest.TestCase):
                      'created_at': Timestamp(time.time() - 7200).short,
                      'name': 'obj%d' % i} for i in range(10)]
         new_rows = [{'ROWID': 300 + i,
-                     'created_at': Timestamp.now().short,
+                     'created_at': Timestamp(time.time()).short,
                      'name': 'obj%d' % (i + 10)} for i in range(10)]
         self.mock_broker.get_items_since.side_effect = (
             [], old_rows + new_rows)
