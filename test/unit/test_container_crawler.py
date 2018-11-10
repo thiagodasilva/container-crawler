@@ -7,15 +7,15 @@ from swift.common.utils import Timestamp
 import time
 import unittest
 
-import container_crawler
-from container_crawler import RetryError
+from container_crawler import crawler
 from container_crawler.base_sync import BaseSync
+from container_crawler.exceptions import RetryError
 
 
 class TestContainerCrawler(unittest.TestCase):
 
     @mock.patch('container_crawler.utils.InternalClient')
-    @mock.patch('container_crawler.Ring')
+    @mock.patch('container_crawler.crawler.Ring')
     def _setup_mocked_crawler(self, mock_ring, mock_ic):
         self.mock_ring = mock.Mock(
             get_nodes=mock.Mock(
@@ -38,8 +38,7 @@ class TestContainerCrawler(unittest.TestCase):
             get_items_since=mock.Mock(return_value=[]),
             is_deleted=mock.Mock(return_value=False))
 
-        self.crawler = container_crawler.ContainerCrawler(
-            self.conf, self.mock_handler_factory)
+        self.crawler = crawler.Crawler(self.conf, self.mock_handler_factory)
 
     def setUp(self):
         self.conf = {
@@ -52,7 +51,8 @@ class TestContainerCrawler(unittest.TestCase):
 
     @contextmanager
     def _patch_broker(self):
-        with mock.patch('container_crawler.ContainerBroker') as mock_broker:
+        with mock.patch(
+                'container_crawler.crawler.ContainerBroker') as mock_broker:
             mock_broker.return_value = self.mock_broker
             yield mock_broker
 
@@ -140,7 +140,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(
             expected, self.mock_handler.handle.call_args_list)
 
-    @mock.patch('container_crawler.traceback')
+    @mock.patch('container_crawler.crawler.traceback')
     def test_bulk_errors(self, tb_mock):
         self.conf['bulk_process'] = 'true'
         self._setup_mocked_crawler()
@@ -164,7 +164,7 @@ class TestContainerCrawler(unittest.TestCase):
              mock.call(tb_mock.format_exc.return_value)],
             self.crawler.logger.error.mock_calls)
 
-    @mock.patch('container_crawler.traceback')
+    @mock.patch('container_crawler.crawler.traceback')
     def test_failed_handler_factory_instance(self, tb_mock):
         self.crawler.handler_factory.instance.side_effect =\
             RuntimeError('oops')
@@ -245,7 +245,7 @@ class TestContainerCrawler(unittest.TestCase):
                 expected,
                 self.mock_handler.handle.call_args_list)
 
-    @mock.patch('container_crawler.traceback.format_exc')
+    @mock.patch('container_crawler.crawler.traceback.format_exc')
     def test_unicode_object_failure(self, mock_tb):
         row = {'ROWID': 42,
                'name': 'monkey-\xf0\x9f\x90\xb5',
@@ -264,7 +264,7 @@ class TestContainerCrawler(unittest.TestCase):
                        row['ROWID'], row['name'].decode('utf-8')))],
             self.crawler.logger.error.mock_calls)
 
-    @mock.patch('container_crawler.traceback.format_exc')
+    @mock.patch('container_crawler.crawler.traceback.format_exc')
     def test_worker_handles_all_exceptions(self, tb_mock):
         self.mock_handler.handle.side_effect = BaseException('base error')
         tb_mock.return_value = 'traceback'
@@ -284,7 +284,7 @@ class TestContainerCrawler(unittest.TestCase):
                 row['ROWID'], row['name'].decode('utf-8')))],
             self.crawler.logger.error.mock_calls)
 
-    @mock.patch('container_crawler.traceback.format_exc')
+    @mock.patch('container_crawler.crawler.traceback.format_exc')
     def test_unicode_container_account_failure(self, tb_mock):
         container = {
             'account': 'account-\xf0\x9f\x90\xb5',
@@ -305,13 +305,13 @@ class TestContainerCrawler(unittest.TestCase):
              mock.call('traceback')],
             self.crawler.logger.error.mock_calls)
 
-    @mock.patch('container_crawler.time')
+    @mock.patch('container_crawler.crawler.time')
     def test_exit_if_no_containers(self, time_mock):
         self.crawler.conf['containers'] = []
         time_mock.sleep.side_effect = RuntimeError('Should not sleep')
         self.crawler.run_always()
 
-    @mock.patch('container_crawler.traceback.format_exc')
+    @mock.patch('container_crawler.crawler.traceback.format_exc')
     def test_no_exception_on_failure(self, format_exc_mock):
         containers = [
             {'account': 'foo',
@@ -357,7 +357,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(expected_calls,
                          self.mock_handler_factory.instance.mock_calls)
 
-    @mock.patch('container_crawler.ContainerBroker')
+    @mock.patch('container_crawler.crawler.ContainerBroker')
     @mock.patch('os.path.exists')
     @mock.patch('os.listdir')
     def test_handles_every_container_in_account(
@@ -540,7 +540,7 @@ class TestContainerCrawler(unittest.TestCase):
                          self.mock_handler.handle.mock_calls)
 
     @mock.patch('container_crawler.utils.InternalClient')
-    @mock.patch('container_crawler.Ring')
+    @mock.patch('container_crawler.crawler.Ring')
     def test_bulk_init(self, mock_ring, mock_ic):
         self.mock_ring = mock.Mock()
         mock_ring.return_value = self.mock_ring
@@ -555,17 +555,17 @@ class TestContainerCrawler(unittest.TestCase):
                      'status_dir': '/var/scratch',
                      'bulk_process': True,
                      'enumerator_workers': 42}
-        crawler = container_crawler.ContainerCrawler(
+        daemon = crawler.Crawler(
             self.conf, self.mock_handler_factory)
-        self.assertEqual(True, crawler.bulk)
-        self.assertEqual(1, crawler._swift_pool.min_size)
-        self.assertEqual(1, crawler._swift_pool.max_size)
-        self.assertEqual(1, crawler._swift_pool.current_size)
-        self.assertEqual(42, crawler.enumerator_pool.size)
-        self.assertEqual(42, crawler.enumerator_queue.maxsize)
+        self.assertEqual(True, daemon.bulk)
+        self.assertEqual(1, daemon._swift_pool.min_size)
+        self.assertEqual(1, daemon._swift_pool.max_size)
+        self.assertEqual(1, daemon._swift_pool.current_size)
+        self.assertEqual(42, daemon.enumerator_pool.size)
+        self.assertEqual(42, daemon.enumerator_queue.maxsize)
 
     @mock.patch('container_crawler.utils.InternalClient')
-    @mock.patch('container_crawler.Ring')
+    @mock.patch('container_crawler.crawler.Ring')
     def test_no_bulk_init(self, mock_ring, mock_ic):
         self.mock_ring = mock.Mock()
         mock_ring.return_value = self.mock_ring
@@ -579,16 +579,16 @@ class TestContainerCrawler(unittest.TestCase):
                      'bulk_process': False,
                      'workers': 50,
                      'enumerator_workers': 84}
-        crawler = container_crawler.ContainerCrawler(
+        daemon = crawler.Crawler(
             self.conf, self.mock_handler_factory)
-        self.assertEqual(False, crawler.bulk)
-        self.assertEqual(50, crawler._swift_pool.min_size)
-        self.assertEqual(50, crawler._swift_pool.max_size)
-        self.assertEqual(50, crawler._swift_pool.current_size)
-        self.assertEqual(50, crawler.worker_pool.size)
-        self.assertEqual(100, crawler.work_queue.maxsize)
-        self.assertEqual(84, crawler.enumerator_pool.size)
-        self.assertEqual(84, crawler.enumerator_queue.maxsize)
+        self.assertEqual(False, daemon.bulk)
+        self.assertEqual(50, daemon._swift_pool.min_size)
+        self.assertEqual(50, daemon._swift_pool.max_size)
+        self.assertEqual(50, daemon._swift_pool.current_size)
+        self.assertEqual(50, daemon.worker_pool.size)
+        self.assertEqual(100, daemon.work_queue.maxsize)
+        self.assertEqual(84, daemon.enumerator_pool.size)
+        self.assertEqual(84, daemon.enumerator_queue.maxsize)
 
     def test_one_handler_per_container(self):
         handler_progress = eventlet.queue.Queue()
@@ -674,7 +674,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.logger.error.assert_not_called()
         self.mock_handler.save_last_row.assert_not_called()
 
-    @mock.patch('container_crawler.ContainerBroker')
+    @mock.patch('container_crawler.crawler.ContainerBroker')
     def test_skip_missing_containers(self, broker_mock):
         # NB: covers both db-file-is-not-on-disk and db-file-is-marked-deleted
 
@@ -704,10 +704,11 @@ class TestContainerCrawler(unittest.TestCase):
         handle_rows = [row for row in rows if row['ROWID'] % 2]
         verify_rows = [row for row in rows if not row['ROWID'] % 2]
 
-        real_container_job = container_crawler.ContainerJob()
+        real_container_job = crawler.ContainerJob()
         mock_job = mock.Mock(wraps=real_container_job)
 
-        with mock.patch('container_crawler.ContainerJob') as mock_job_class:
+        with mock.patch(
+                'container_crawler.crawler.ContainerJob') as mock_job_class:
             self._setup_mocked_crawler()
             finished_processing = [False]
             self.mock_ring.get_nodes.return_value = ('deadbeef', nodes)
