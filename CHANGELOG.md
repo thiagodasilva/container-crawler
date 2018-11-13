@@ -1,3 +1,12 @@
+## 0.1.0 (2018-11-13)
+
+Improvements:
+
+- Changed the code structure, such that exceptions are placed into a separate
+  module and can be imported without importing the main Crawler code. The main
+  library class has also been renamed to Crawler and placed in the `crawler`
+  module.
+
 ## 0.0.18 (2018-10-17)
 
 Bug fixes:
