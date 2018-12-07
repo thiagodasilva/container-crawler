@@ -2,7 +2,9 @@ import eventlet
 import eventlet.pools
 eventlet.patcher.monkey_patch(all=True)
 
+import glob
 import os.path
+import random
 import time
 import threading
 import traceback
@@ -10,7 +12,7 @@ import traceback
 from swift.common.ring import Ring
 from swift.common.ring.utils import is_local_device
 from swift.common.utils import config_true_value, decode_timestamps,\
-    hash_path, storage_directory, whataremyips
+    hash_path, storage_directory, whataremyips, Timestamp
 
 from swift.container.backend import DATADIR, ContainerBroker
 
@@ -82,6 +84,10 @@ class Crawler(object):
 
         self.status_dir = conf['status_dir']
         self.myips = whataremyips(conf.get('swift_bind_ip', '0.0.0.0'))
+        interval = conf.get('sharded_container_interval', 86400)
+        # allowing for some randomness in the interval to mitigate
+        # thundering herd problem
+        self.sharded_interval = interval + random.randint(0, 600)
         self.items_chunk = conf['items_chunk']
         # Verification slack is specified in minutes.
         self._verification_slack = conf.get('verification_slack', 0) * 60
@@ -319,7 +325,7 @@ class Crawler(object):
         key = (settings['account'], settings['container'])
         return key in self._in_progress_containers
 
-    def _prune_deleted_containers(self, settings, containers):
+    def _prune_deleted_containers(self, account, containers, prefix=None):
         # After iterating over all of the containers, we prune any
         # entries from containers that may have been deleted (so as to
         # avoid missing data). There is still a chance where a
@@ -328,10 +334,15 @@ class Crawler(object):
         # TODO: keep track of container creation date to detect when
         # they are removed and then added.
         account_status_dir = os.path.join(
-            self.status_dir, settings['account']).encode('utf-8')
+            self.status_dir, account.encode('utf-8'))
         if not os.path.exists(account_status_dir):
             return
-        tracked_containers = os.listdir(account_status_dir)
+        if prefix:
+            tc = glob.glob(
+                os.path.join(account_status_dir, prefix + '*'))
+            tracked_containers = [os.path.basename(t) for t in tc]
+        else:
+            tracked_containers = os.listdir(account_status_dir)
         disappeared = set(tracked_containers) - set(
             map(lambda container: container.encode('utf-8'), containers))
         for container in disappeared:
@@ -341,12 +352,47 @@ class Crawler(object):
                 self.log(
                     'warning',
                     'Failed to remove the status file for %s: %s' % (
-                        os.path.join(settings['account'], container), repr(e)))
+                        os.path.join(account, container), repr(e)))
+
+    def _process_sharded_container(self, settings, per_account=False):
+        # check if account is sharded only once every sharded_internval
+        now = Timestamp.now().internal
+        if 'shard_check_ts' in settings and \
+                float(settings['shard_check_ts']) + self.sharded_interval > \
+                float(now):
+            return
+        sharded_account = '.shards_' + settings['account']
+        #TODO might need to add etag as part of prefix
+        sharded_container = settings['container']
+        settings['shard_check_ts'] = now
+        all_sharded_containers = self.list_containers(
+            sharded_account, prefix=sharded_container)
+        for container in all_sharded_containers:
+            # if original source container is sharded
+            # shards needs to be listed every iteration
+            settings['shard_check_ts'] = 0
+            settings_copy = settings.copy()
+            settings_copy['account'] = sharded_account
+            settings_copy['container'] = container
+            self._enqueue_container(settings_copy, per_account)
+        if all_sharded_containers:
+            self._prune_deleted_containers(
+                sharded_account, all_sharded_containers,
+                prefix=sharded_container)
+
+    def _process_container(self, settings, per_account=False):
+        # save original_account/containers for metrics calculation
+        # TODO: is 'parent' a better name?
+        settings['original_account'] = settings['account']
+        settings['original_container'] = settings['container']
+        self._process_sharded_container(settings, per_account)
+        self._enqueue_container(settings, per_account)
 
     def _enqueue_container(self, settings, per_account=False):
-        key = (settings['account'], settings['container'])
-        self._in_progress_containers.add(key)
-        self.enumerator_queue.put((settings, per_account))
+        if not self._is_processing(settings):
+            key = (settings['account'], settings['container'])
+            self._in_progress_containers.add(key)
+            self.enumerator_queue.put((settings, per_account))
 
     def _submit_containers(self):
         for container_settings in self.conf['containers']:
@@ -368,17 +414,13 @@ class Crawler(object):
                 for container in all_containers:
                     settings_copy = container_settings.copy()
                     settings_copy['container'] = container
-                    if not self._is_processing(settings_copy):
-                        self._enqueue_container(
-                            settings_copy, per_account=True)
+                    self._process_container(settings_copy, per_account=True)
 
                 # clean status dir off containers that have been deleted
-                self._prune_deleted_containers(container_settings,
+                self._prune_deleted_containers(container_settings['account'],
                                                all_containers)
             else:
-                if not self._is_processing(container_settings):
-                    self._enqueue_container(container_settings,
-                                            per_account=False)
+                self._process_container(container_settings)
 
     def run_always(self):
         # Since we don't support reloading, the daemon should quit if there are
