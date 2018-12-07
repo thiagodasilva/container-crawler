@@ -317,6 +317,30 @@ class Crawler(object):
         key = (settings['account'], settings['container'])
         return key in self._in_progress_containers
 
+    def _prune_deleted_containers(self, settings, containers):
+        # After iterating over all of the containers, we prune any
+        # entries from containers that may have been deleted (so as to
+        # avoid missing data). There is still a chance where a
+        # container is removed and created between the calls to
+        # CloudSync, however there is nothing we can do about that.
+        # TODO: keep track of container creation date to detect when
+        # they are removed and then added.
+        account_status_dir = os.path.join(
+            self.status_dir, settings['account']).encode('utf-8')
+        if not os.path.exists(account_status_dir):
+            return
+        tracked_containers = os.listdir(account_status_dir)
+        disappeared = set(tracked_containers) - set(
+            map(lambda container: container.encode('utf-8'), containers))
+        for container in disappeared:
+            try:
+                os.unlink(os.path.join(account_status_dir, container))
+            except Exception as e:
+                self.log(
+                    'warning',
+                    'Failed to remove the status file for %s: %s' % (
+                        os.path.join(settings['account'], container), repr(e)))
+
     def _enqueue_container(self, settings, per_account=False):
         key = (settings['account'], settings['container'])
         self._in_progress_containers.add(key)
@@ -345,31 +369,10 @@ class Crawler(object):
                     if not self._is_processing(settings_copy):
                         self._enqueue_container(
                             settings_copy, per_account=True)
-                # After iterating over all of the containers, we prune any
-                # entries from containers that may have been deleted (so as to
-                # avoid missing data). There is still a chance where a
-                # container is removed and created between the calls to
-                # CloudSync, however there is nothing we can do about that.
-                # TODO: keep track of container creation date to detect when
-                # they are removed and then added.
-                account_status_dir = os.path.join(
-                    self.status_dir, container_settings['account']
-                ).encode('utf-8')
-                if not os.path.exists(account_status_dir):
-                    continue
-                tracked_containers = os.listdir(account_status_dir)
-                disappeared = set(tracked_containers) - set(
-                    map(lambda container: container.encode('utf-8'),
-                        all_containers))
-                for container in disappeared:
-                    try:
-                        os.unlink(os.path.join(account_status_dir, container))
-                    except Exception as e:
-                        self.log(
-                            'warning',
-                            'Failed to remove the status file for %s: %s' % (
-                                os.path.join(container_settings['account'],
-                                             container), repr(e)))
+
+                # clean status dir off containers that have been deleted
+                self._prune_deleted_containers(container_settings,
+                                               all_containers)
             else:
                 if not self._is_processing(container_settings):
                     self._enqueue_container(container_settings,
