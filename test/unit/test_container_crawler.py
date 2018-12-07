@@ -403,7 +403,8 @@ class TestContainerCrawler(unittest.TestCase):
 
         self.crawler.run_once()
 
-        self.mock_ic.iter_containers.assert_called_once_with(account)
+        self.mock_ic.iter_containers.assert_called_once_with(account,
+                                                             prefix='')
         expected = [
             (mock.call.is_deleted(),
              mock.call.get_info(),
@@ -442,7 +443,8 @@ class TestContainerCrawler(unittest.TestCase):
 
         self.crawler.run_once()
 
-        self.mock_ic.iter_containers.assert_called_once_with(account)
+        self.mock_ic.iter_containers.assert_called_once_with(account,
+                                                             prefix='')
         ls_mock.assert_called_once_with(
             ('%s/%s' % (self.conf['status_dir'], account)).encode('utf-8'))
         self.assertEqual([

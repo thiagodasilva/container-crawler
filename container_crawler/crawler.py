@@ -302,14 +302,15 @@ class Crawler(object):
                          self.work_queue)
         return job.wait_all()
 
-    def list_containers(self, account):
+    def list_containers(self, account, prefix=''):
         # TODO: we should not have to retrieve all of the containers at once,
         # but it will require allocating a swift_client for this purpose from
         # the pool -- consider doing that at some point. However, as long as
         # there are fewer than a few million containers, getting all of them at
         # once should be cheap, paginating 10000 at a time.
         with self._swift_pool.item() as swift_client:
-            return [c['name'] for c in swift_client.iter_containers(account)]
+            return [c['name'] for c in swift_client.iter_containers(
+                account, prefix=prefix)]
 
     def _is_processing(self, settings):
         # NOTE: if we allow more than one destination for (account, container),
