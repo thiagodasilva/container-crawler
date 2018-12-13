@@ -923,8 +923,8 @@ class TestContainerCrawler(unittest.TestCase):
             'bar-etag-ts-1', 'bar-etag-ts-2']
 
         self.assertEqual(
-            expected,
-            os.listdir(acc_status_dir))
+            expected.sort(),
+            os.listdir(acc_status_dir).sort())
         shutil.rmtree(acc_status_dir)
 
     def test_list_containers_prefix(self):

@@ -362,7 +362,7 @@ class Crawler(object):
                 float(now):
             return
         sharded_account = '.shards_' + settings['account']
-        #TODO might need to add etag as part of prefix
+        # TODO might need to add etag as part of prefix
         sharded_container = settings['container']
         settings['shard_check_ts'] = now
         all_sharded_containers = self.list_containers(
