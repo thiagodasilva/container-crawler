@@ -6,7 +6,7 @@ with open('requirements.txt') as reqs_file:
     reqs = [req.strip() for req in reqs_file]
 
 setup(name='container-crawler',
-      version='0.1.0',
+      version='0.1.1',
       author='SwiftStack',
       author_email='info@swiftstack.com',
       test_suite='nose.collector',

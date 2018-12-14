@@ -1,3 +1,13 @@
+## 0.1.1 (2018-12-14)
+
+Improvements:
+
+- Add a `swift_bind_ip` option to allow specifying which IP should be checked
+  during the check of which node is affiliated with 1space. Default is 0.0.0.0.
+- Expand the ContainerCrawler API with a `handle_container_metadata` method.
+  This allows the library users to act on container's metadata, as well as the
+  rows within it.
+
 ## 0.1.0 (2018-11-13)
 
 Improvements:
