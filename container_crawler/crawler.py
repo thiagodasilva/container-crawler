@@ -4,7 +4,6 @@ eventlet.patcher.monkey_patch(all=True)
 
 import glob
 import os.path
-import random
 import time
 import threading
 import traceback
