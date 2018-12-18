@@ -11,8 +11,10 @@ import traceback
 
 from swift.common.ring import Ring
 from swift.common.ring.utils import is_local_device
+from swift.common.internal_client import UnexpectedResponse
+from swift.common.http import HTTP_NOT_FOUND
 from swift.common.utils import config_true_value, decode_timestamps,\
-    hash_path, storage_directory, whataremyips, Timestamp
+    hash_path, storage_directory, whataremyips
 
 from swift.container.backend import DATADIR, ContainerBroker
 
@@ -193,6 +195,9 @@ class Crawler(object):
                 if not broker:
                     continue
 
+                if broker.is_sharded():
+                    self._enqueue_sharded_container(settings, per_account)
+
                 broker_id = broker.get_info()['id']
                 handler = self.handler_factory.instance(
                     settings, per_account=per_account)
@@ -271,13 +276,15 @@ class Crawler(object):
             return
         getattr(self.logger, level)(message)
 
-    def get_broker(self, account, container):
-        """Instatiates a container database broker.
+    def _get_db_info(self, account, container):
+        """
+        Returns the database path of the container
 
         :param account: UTF-8 encoded account name
         :param container: UTF-8 encoded container name
-        :returns: ContainerBroker (or None if the DB cannot be found)
+        :returns: a tuple of (db path, nodes count, index of replica)
         """
+
         part, container_nodes = self.container_ring.get_nodes(
             account, container)
         nodes_count = len(container_nodes)
@@ -290,6 +297,18 @@ class Crawler(object):
                 continue
             db_path = os.path.join(
                 self.root, node['device'], db_dir, db_hash + '.db')
+            return db_path, nodes_count, index
+        return None, None, None
+
+    def get_broker(self, account, container):
+        """Instatiates a container database broker.
+
+        :param account: UTF-8 encoded account name
+        :param container: UTF-8 encoded container name
+        :returns: a tuple of (ContainerBroker, nodes count, index of replica)
+        """
+        db_path, nodes_count, index = self._get_db_info(account, container)
+        if db_path:
             broker = ContainerBroker(
                 db_path, account=account, container=container)
             if not broker.is_deleted():
@@ -337,12 +356,15 @@ class Crawler(object):
             self.status_dir, account.encode('utf-8'))
         if not os.path.exists(account_status_dir):
             return
+
         if prefix:
-            tc = glob.glob(
+            container_paths = glob.glob(
                 os.path.join(account_status_dir, prefix + '*'))
-            tracked_containers = [os.path.basename(t) for t in tc]
+            tracked_containers = [
+                os.path.basename(path) for path in container_paths]
         else:
             tracked_containers = os.listdir(account_status_dir)
+
         disappeared = set(tracked_containers) - set(
             map(lambda container: container.encode('utf-8'), containers))
         for container in disappeared:
@@ -354,23 +376,45 @@ class Crawler(object):
                     'Failed to remove the status file for %s: %s' % (
                         os.path.join(account, container), repr(e)))
 
-    def _process_sharded_container(self, settings, per_account=False):
-        # check if account is sharded only once every sharded_internval
-        now = Timestamp.now().internal
-        if 'shard_check_ts' in settings and \
-                float(settings['shard_check_ts']) + self.sharded_interval > \
-                float(now):
-            return
+    def _check_sharded_container(self, settings, per_account=False):
+        """
+        Retrieve container metadata with a HEAD request and
+        find out if container is sharded.
+        If so, enqueue shards for crawling
+        """
+        account = settings['account']
+        container = settings['container']
+        with self._swift_pool.item() as swift_client:
+            try:
+                metadata = swift_client.get_container_metadata(
+                    account, container)
+            except UnexpectedResponse as err:
+                if err.resp.status_int not in {HTTP_NOT_FOUND}:
+                    self.log(
+                        'error',
+                        'Failed to retrieve container metadata for %s: %s' % (
+                            os.path.join(account, container), repr(err)))
+                metadata = {}
+            except Exception as err:
+                self.log(
+                    'error',
+                    'Failed to retrieve container metadata for %s: %s' % (
+                        os.path.join(account, container), repr(err)))
+                metadata = {}
+
+        if metadata and metadata['x-backend-sharding-state'] == 'sharded':
+            self._enqueue_sharded_container(settings, per_account)
+
+    def _enqueue_sharded_container(self, settings, per_account=False):
+        """
+        Get list of shards for a given containers and add them to the
+        work queue.
+        """
         sharded_account = '.shards_' + settings['account']
-        # TODO might need to add etag as part of prefix
         sharded_container = settings['container']
-        settings['shard_check_ts'] = now
         all_sharded_containers = self.list_containers(
             sharded_account, prefix=sharded_container)
         for container in all_sharded_containers:
-            # if original source container is sharded
-            # shards needs to be listed every iteration
-            settings['shard_check_ts'] = 0
             settings_copy = settings.copy()
             settings_copy['account'] = sharded_account
             settings_copy['container'] = container
@@ -381,11 +425,28 @@ class Crawler(object):
                 prefix=sharded_container)
 
     def _process_container(self, settings, per_account=False):
-        # save original_account/containers for metrics calculation
-        # TODO: is 'parent' a better name?
-        settings['original_account'] = settings['account']
-        settings['original_container'] = settings['container']
-        self._process_sharded_container(settings, per_account)
+        # save root account/containers for metrics calculation
+        account = settings['account']
+        container = settings['container']
+        settings['root_account'] = account
+        settings['root_container'] = container
+
+        # if container db is not on local node, we need to check
+        # if container is sharded with a HEAD request because
+        # shards of that container could potentially be stored on this node
+        # even if root container is not. Otherwise we check if container is
+        # sharded when we have the broker.
+        try:
+            db_path, _, _ = self._get_db_info(
+                account.encode('utf-8'), container.encode('utf-8'))
+        except:
+            self.log('error', "Failed to process %s/%s" % (
+                account, container))
+            self.log('error', traceback.format_exc())
+            return
+
+        if not db_path:
+            self._check_sharded_container(settings, per_account)
         self._enqueue_container(settings, per_account)
 
     def _enqueue_container(self, settings, per_account=False):

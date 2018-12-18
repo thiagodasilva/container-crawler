@@ -1,6 +1,8 @@
 # -*- coding: UTF-8 -*-
 
 from contextlib import contextmanager
+from tempfile import mkdtemp
+
 import eventlet
 import mock
 import os
@@ -51,10 +53,13 @@ class TestContainerCrawler(unittest.TestCase):
         self.conf = {
             'devices': '/devices',
             'items_chunk': 1000,
-            'status_dir': '/tmp/scratch',
+            'status_dir': mkdtemp(),
             'containers': [{'account': 'account',
                             'container': 'container'}]}
         self._setup_mocked_crawler()
+
+    def tearDown(self):
+        shutil.rmtree(self.conf['status_dir'])
 
     @contextmanager
     def _patch_broker(self):
@@ -314,13 +319,14 @@ class TestContainerCrawler(unittest.TestCase):
             side_effect=BaseException('base error'))
         self.crawler.logger = mock.Mock()
         self.mock_ic.iter_containers.return_value = []
+        metadata = {'x-backend-sharding-state': 'unsharded'}
+        self.mock_ic.get_container_metadata.return_value = metadata
 
         self.crawler.run_once()
         self.assertEqual(
-            [mock.call('Failed to process %s/%s with %s' % (
+            [mock.call('Failed to process %s/%s' % (
                 container['account'],
-                container['container'],
-                str(self.crawler.handler_factory))),
+                container['container'])),
              mock.call('traceback')],
             self.crawler.logger.error.mock_calls)
 
@@ -378,12 +384,11 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(expected_calls,
                          self.mock_handler_factory.instance.mock_calls)
 
-    @mock.patch('swift.common.utils.Timestamp.now')
     @mock.patch('container_crawler.crawler.ContainerBroker')
     @mock.patch('os.path.exists')
     @mock.patch('os.listdir')
     def test_handles_every_container_in_account(
-            self, ls_mock, exists_mock, broker_mock, ts_mock):
+            self, ls_mock, exists_mock, broker_mock):
         account = 'AUTH_blah'
         self.crawler.conf['containers'] = [
             {'account': account,
@@ -402,8 +407,6 @@ class TestContainerCrawler(unittest.TestCase):
         ls_mock.return_value = test_containers
         broker_mock.return_value = self.mock_broker
         self.mock_broker.get_items_since.return_value = []
-        ts = Timestamp.now()
-        ts_mock.return_value = ts
 
         class FakeHandler(BaseSync):
             def __init__(self, *args, **kwargs):
@@ -440,6 +443,7 @@ class TestContainerCrawler(unittest.TestCase):
 
         expected = [
             (mock.call.is_deleted(),
+             mock.call.is_sharded(),
              mock.call.get_info(),
              mock.call.get_items_since(5000, 1000),
              mock.call.get_items_since(10, 1000))
@@ -451,9 +455,8 @@ class TestContainerCrawler(unittest.TestCase):
             '%s/%s' % (self.conf['status_dir'], account))
         expected_handler_calls = [
             mock.call({'account': account,
-                       'original_account': account,
-                       'original_container': container,
-                       'shard_check_ts': ts.internal,
+                       'root_account': account,
+                       'root_container': container,
                        'container': container},
                       per_account=True)
             for container in test_containers]
@@ -592,11 +595,9 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_ic = mock.Mock()
         mock_ic.return_value = self.mock_ic
 
-        self.conf = {'devices': '/devices',
-                     'items_chunk': 1000,
-                     'status_dir': '/tmp/scratch',
-                     'bulk_process': True,
-                     'enumerator_workers': 42}
+        del self.conf['containers']
+        self.conf['bulk_process'] = True
+        self.conf['enumerator_workers'] = 42
         daemon = crawler.Crawler(
             self.conf, self.mock_handler_factory)
         self.assertEqual(True, daemon.bulk)
@@ -615,12 +616,10 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_ic = mock.Mock()
         mock_ic.return_value = self.mock_ic
 
-        self.conf = {'devices': '/devices',
-                     'items_chunk': 1000,
-                     'status_dir': '/tmp/scratch',
-                     'bulk_process': False,
-                     'workers': 50,
-                     'enumerator_workers': 84}
+        del self.conf['containers']
+        self.conf['bulk_process'] = False
+        self.conf['workers'] = 50
+        self.conf['enumerator_workers'] = 84
         daemon = crawler.Crawler(
             self.conf, self.mock_handler_factory)
         self.assertEqual(False, daemon.bulk)
@@ -719,6 +718,8 @@ class TestContainerCrawler(unittest.TestCase):
              'container': 'baz'}]
         self.crawler.logger = mock.Mock()
         self.mock_ic.iter_containers.return_value = []
+        metadata = {'x-backend-sharding-state': 'unsharded'}
+        self.mock_ic.get_container_metadata.return_value = metadata
 
         self.crawler._submit_containers()
         self.crawler.enumerator_queue.join()
@@ -750,8 +751,8 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_handler.save_last_row.assert_not_called()
 
     def test_processed_before_verification(self):
-        nodes = [{'ip': '1.2.3.4', 'port': 1234},
-                 {'ip': '127.0.0.1', 'port': 1234}]
+        nodes = [{'ip': '1.2.3.4', 'port': 1234, 'device': '/dev/sda'},
+                 {'ip': '127.0.0.1', 'port': 1234, 'device': '/dev/sda'}]
         rows = [{'ROWID': i, 'name': 'obj%d' % i} for i in range(90, 100)]
         handle_rows = [row for row in rows if row['ROWID'] % 2]
         verify_rows = [row for row in rows if not row['ROWID'] % 2]
@@ -832,51 +833,39 @@ class TestContainerCrawler(unittest.TestCase):
 
         logger.error.assert_not_called()
 
-    def test_skip_check_sharded_container(self):
-        # last check was 10 minutes ago, should not check again
-        last_check = float(Timestamp.now().internal) - 600
-        container_setting = {
-            'account': 'acc',
-            'shard_check_ts': last_check,
-            'container': 'cont'}
-        list_mock = mock.Mock()
-        self.crawler.list_containers = list_mock
-        self.crawler._process_sharded_container(container_setting)
-        list_mock.assert_not_called()
-
+    @mock.patch('container_crawler.crawler.Crawler._get_db_info')
     @mock.patch('container_crawler.crawler.Crawler.list_containers')
     @mock.patch('container_crawler.crawler.Crawler._enqueue_container')
     @mock.patch('glob.glob')
-    def test_process_sharded_container(self, glob_mock, mock_enq, mock_list):
+    def test_process_sharded_container(self, glob_mock, mock_enq,
+                                       mock_list, mock_db_info):
         sharded_containers = [
             'foo-etag-ts-1', 'foo-etag-ts-2', 'foo-etag-ts-3']
+        metadata = {'x-backend-sharding-state': 'sharded'}
+        self.mock_ic.get_container_metadata.return_value = metadata
         mock_list.return_value = sharded_containers
         self.crawler.list_containers = mock_list
         glob_mock.return_value = sharded_containers
         os.makedirs('%s/.shards_acc' % self.conf['status_dir'])
+        mock_db_info.return_value = None, None, None
 
-        # last check was 2 days ago
-        last_check = float(Timestamp.now().internal) - 172800
         container_setting = {
             'account': 'acc',
-            'shard_check_ts': last_check,
             'container': 'foo'}
         self.crawler._process_container(container_setting)
         expected = [
             mock.call(
                 {'account': '.shards_acc',
                  'container': sc,
-                 'original_account': 'acc',
-                 'original_container': 'foo',
-                 'shard_check_ts': 0},
+                 'root_account': 'acc',
+                 'root_container': 'foo'},
                 False) for sc in sharded_containers]
         expected.append(
             mock.call(
                 {'account': 'acc',
                  'container': 'foo',
-                 'original_account': 'acc',
-                 'original_container': 'foo',
-                 'shard_check_ts': 0}, False))
+                 'root_account': 'acc',
+                 'root_container': 'foo'}, False))
 
         self.assertEqual(expected, mock_enq.mock_calls)
 
@@ -902,9 +891,8 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler._prune_deleted_containers(acc, current)
 
         self.assertEqual(
-            current,
-            os.listdir(acc_status_dir))
-        shutil.rmtree(acc_status_dir)
+            current.sort(),
+            os.listdir(acc_status_dir).sort())
 
     def test_prune_deleted_sharded_containers(self):
         acc = '.shards_AUTH_testacc'
@@ -925,7 +913,6 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(
             expected.sort(),
             os.listdir(acc_status_dir).sort())
-        shutil.rmtree(acc_status_dir)
 
     def test_list_containers_prefix(self):
         self.mock_ic.iter_containers.return_value = []
