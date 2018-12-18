@@ -86,10 +86,6 @@ class Crawler(object):
 
         self.status_dir = conf['status_dir']
         self.myips = whataremyips(conf.get('swift_bind_ip', '0.0.0.0'))
-        interval = conf.get('sharded_container_interval', 86400)
-        # allowing for some randomness in the interval to mitigate
-        # thundering herd problem
-        self.sharded_interval = interval + random.randint(0, 600)
         self.items_chunk = conf['items_chunk']
         # Verification slack is specified in minutes.
         self._verification_slack = conf.get('verification_slack', 0) * 60
