@@ -1,6 +1,8 @@
 Swift Container Crawler
 =======================
 
+[![Coverage Status](https://coveralls.io/repos/github/swiftstack/container-crawler/badge.svg?branch=master)](https://coveralls.io/github/swiftstack/container-crawler?branch=master)
+
 Library for iterating over OpenStack Swift container databases and acting on
 each entry. The container database stores the names of the objects, the object
 timestamp, and a flag indicating whether the record is a tombstone. Swift
