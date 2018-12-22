@@ -371,14 +371,12 @@ class Crawler(object):
                     'Failed to remove the status file for %s: %s' % (
                         os.path.join(account, container), repr(e)))
 
-    def _check_sharded_container(self, settings, per_account=False):
+    def _is_container_sharded(self, account, container):
         """
         Retrieve container metadata with a HEAD request and
         find out if container is sharded.
-        If so, enqueue shards for crawling
+        :returns: True if container is sharded. False otherwise.
         """
-        account = settings['account']
-        container = settings['container']
         with self._swift_pool.item() as swift_client:
             try:
                 metadata = swift_client.get_container_metadata(
@@ -397,14 +395,14 @@ class Crawler(object):
                         os.path.join(account, container), repr(err)))
                 metadata = {}
 
-        if metadata and metadata['x-backend-sharding-state'] == 'sharded':
-            self._enqueue_sharded_container(settings, per_account)
+        return metadata and metadata['x-backend-sharding-state'] == 'sharded'
 
     def _enqueue_sharded_container(self, settings, per_account=False):
         """
         Get list of shards for a given containers and add them to the
         work queue.
         """
+        # TODO: look into saving the sharded state of the container
         sharded_account = '.shards_' + settings['account']
         sharded_container = settings['container']
         all_sharded_containers = self.list_containers(
@@ -426,11 +424,6 @@ class Crawler(object):
         settings['root_account'] = account
         settings['root_container'] = container
 
-        # if container db is not on local node, we need to check
-        # if container is sharded with a HEAD request because
-        # shards of that container could potentially be stored on this node
-        # even if root container is not. Otherwise we check if container is
-        # sharded when we have the broker.
         try:
             db_path, _, _ = self._get_db_info(
                 account.encode('utf-8'), container.encode('utf-8'))
@@ -440,9 +433,15 @@ class Crawler(object):
             self.log('error', traceback.format_exc())
             return
 
-        if not db_path:
-            self._check_sharded_container(settings, per_account)
-        self._enqueue_container(settings, per_account)
+        # if container db is not on local node, we need to check
+        # if container is sharded with a HEAD request because
+        # shards of that container could potentially be stored on this node
+        # even if root container is not. Otherwise we check if container is
+        # sharded when we have the broker.
+        if db_path:
+            self._enqueue_container(settings, per_account)
+        elif self._is_container_sharded(account, container):
+            self._enqueue_sharded_container(settings, per_account)
 
     def _enqueue_container(self, settings, per_account=False):
         if not self._is_processing(settings):

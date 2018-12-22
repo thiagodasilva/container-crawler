@@ -42,6 +42,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_broker = mock.Mock(
             get_info=mock.Mock(return_value={'id': 'hash'}),
             get_items_since=mock.Mock(return_value=[]),
+            is_sharded=mock.Mock(return_value=False),
             is_deleted=mock.Mock(return_value=False),
             # Note that this is slightly different from real symantics as
             # metadata is a property, not a static value
@@ -149,7 +150,6 @@ class TestContainerCrawler(unittest.TestCase):
 
         expected = [mock.call([items[x] for x in range(total_rows)],
                     self.mock_ic)]
-        self.mock_ic.iter_containers.return_value = []
 
         with self._patch_broker():
             self.crawler.run_once()
@@ -169,7 +169,6 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_broker.get_items_since.return_value = [
             {'ROWID': 1, 'name': 'foo', 'created_at': Timestamp(time.time())}]
         self.crawler.logger = mock.Mock()
-        self.mock_ic.iter_containers.return_value = []
 
         with self._patch_broker():
             self.crawler.run_once()
@@ -209,7 +208,6 @@ class TestContainerCrawler(unittest.TestCase):
                   'created_at': Timestamp(time.time())}
                  for x in range(rows)]
         self.mock_broker.get_items_since.return_value = items
-        self.mock_ic.iter_containers.return_value = []
 
         for node_id in (0, 1):
             all_nodes = [{'ip': '1.2.3.4', 'port': 1234, 'device': '/dev/sda'}
@@ -236,7 +234,6 @@ class TestContainerCrawler(unittest.TestCase):
                   'created_at': Timestamp(time.time())}
                  for x in range(rows)]
         self.mock_broker.get_items_since.return_value = items
-        self.mock_ic.iter_containers.return_value = []
 
         for node_id in (0, 1):
             # only fail the verify calls
@@ -276,7 +273,6 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_broker.get_items_since.return_value = [row]
         self.crawler.logger = mock.Mock()
         mock_tb.return_value = 'traceback'
-        self.mock_ic.iter_containers.return_value = []
 
         with self._patch_broker():
             self.crawler.run_once()
@@ -297,7 +293,6 @@ class TestContainerCrawler(unittest.TestCase):
                'ROWID': 1,
                'created_at': str(time.time())}
         self.mock_broker.get_items_since.return_value = [row]
-        self.mock_ic.iter_containers.return_value = []
 
         with self._patch_broker():
             self.crawler.run_once()
@@ -318,9 +313,6 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.find_new_rows = mock.Mock(
             side_effect=BaseException('base error'))
         self.crawler.logger = mock.Mock()
-        self.mock_ic.iter_containers.return_value = []
-        metadata = {'x-backend-sharding-state': 'unsharded'}
-        self.mock_ic.get_container_metadata.return_value = metadata
 
         self.crawler.run_once()
         self.assertEqual(
@@ -349,7 +341,6 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.logger = mock.Mock()
         format_exc_mock.return_value = 'traceback'
         self.mock_broker.get_items_since.side_effect = RuntimeError('oops')
-        self.mock_ic.iter_containers.return_value = []
 
         with self._patch_broker():
             self.crawler.run_once()
@@ -375,7 +366,6 @@ class TestContainerCrawler(unittest.TestCase):
             {'account': 'bar',
              'container': 'bar'}
         ]
-        self.mock_ic.iter_containers.return_value = []
 
         with self._patch_broker():
             self.crawler.run_once()
@@ -389,24 +379,17 @@ class TestContainerCrawler(unittest.TestCase):
     @mock.patch('os.listdir')
     def test_handles_every_container_in_account(
             self, ls_mock, exists_mock, broker_mock):
-        account = 'AUTH_blah'
+        account = 'foo'
         self.crawler.conf['containers'] = [
             {'account': account,
              'container': '/*'}
         ]
         test_containers = ['foo', 'bar', 'baz', u'fo\u00f4']
 
-        def mock_iter_containers(account, prefix=''):
-            if account.startswith('.shards_'):
-                return []
-            else:
-                return [
-                    {'name': container} for container in test_containers]
-
-        self.mock_ic.iter_containers.side_effect = mock_iter_containers
+        self.mock_ic.iter_containers.return_value = [
+            {'name': container} for container in test_containers]
         ls_mock.return_value = test_containers
         broker_mock.return_value = self.mock_broker
-        self.mock_broker.get_items_since.return_value = []
 
         class FakeHandler(BaseSync):
             def __init__(self, *args, **kwargs):
@@ -439,7 +422,8 @@ class TestContainerCrawler(unittest.TestCase):
 
         self.crawler.run_once()
 
-        self.mock_ic.iter_containers.assert_any_call(account, prefix='')
+        self.mock_ic.iter_containers.assert_called_once_with(account,
+                                                             prefix='')
 
         expected = [
             (mock.call.is_deleted(),
@@ -507,7 +491,6 @@ class TestContainerCrawler(unittest.TestCase):
         }
 
         self.crawler.conf = {'containers': [settings]}
-        self.mock_ic.iter_containers.return_value = []
         with self._patch_broker():
             self.crawler.run_once()
 
@@ -530,7 +513,6 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_broker.get_items_since.side_effect = [[row], []]
         self.mock_handler._account = account
         self.mock_handler._container = container
-        self.mock_ic.iter_containers.return_value = []
 
         with self._patch_broker():
             self.crawler.run_once()
@@ -568,7 +550,6 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.logger = mock.Mock()
         self.mock_handler._account = 'account'
         self.mock_handler._container = 'container'
-        self.mock_ic.iter_containers.return_value = []
 
         with self._patch_broker():
             self.crawler.run_once()
@@ -648,7 +629,6 @@ class TestContainerCrawler(unittest.TestCase):
              'container': u'q\u00fax'},
         ]
         self.crawler.conf['containers'] = containers
-        self.mock_ic.iter_containers.return_value = []
 
         self.crawler._submit_containers()
         self.assertEqual(2, self.crawler.enumerator_queue.unfinished_tasks)
@@ -681,14 +661,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.conf['containers'] = [
             {'account': u'fo\u00f2',
              'container': '/*'}]
-
-        def mock_list_containers(acc, prefix=''):
-            if acc.startswith('.shards_'):
-                return []
-            else:
-                return containers
-        self.crawler.list_containers = mock.Mock(
-            side_effect=mock_list_containers)
+        self.crawler.list_containers = mock.Mock(return_value=containers)
 
         self.crawler._submit_containers()
         self.assertEqual(2, self.crawler.enumerator_queue.unfinished_tasks)
@@ -717,7 +690,6 @@ class TestContainerCrawler(unittest.TestCase):
             {'account': 'foo',
              'container': 'baz'}]
         self.crawler.logger = mock.Mock()
-        self.mock_ic.iter_containers.return_value = []
         metadata = {'x-backend-sharding-state': 'unsharded'}
         self.mock_ic.get_container_metadata.return_value = metadata
 
@@ -743,7 +715,6 @@ class TestContainerCrawler(unittest.TestCase):
             {'account': 'foo',
              'container': 'baz'}]
         self.crawler.logger = mock.Mock()
-        self.mock_ic.iter_containers.return_value = []
 
         self.crawler._submit_containers()
         self.crawler.enumerator_queue.join()
@@ -811,7 +782,6 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_broker.get_items_since.side_effect = (
             [], old_rows + new_rows)
 
-        self.mock_ic.iter_containers.return_value = []
         logger = mock.Mock()
         self.crawler.logger = logger
 
@@ -833,42 +803,24 @@ class TestContainerCrawler(unittest.TestCase):
 
         logger.error.assert_not_called()
 
-    @mock.patch('container_crawler.crawler.Crawler._get_db_info')
-    @mock.patch('container_crawler.crawler.Crawler.list_containers')
-    @mock.patch('container_crawler.crawler.Crawler._enqueue_container')
+    @mock.patch('container_crawler.crawler.is_local_device')
     @mock.patch('glob.glob')
-    def test_process_sharded_container(self, glob_mock, mock_enq,
-                                       mock_list, mock_db_info):
+    def test_process_sharded_container(self, glob_mock, mock_local_dev):
         sharded_containers = [
             'foo-etag-ts-1', 'foo-etag-ts-2', 'foo-etag-ts-3']
         metadata = {'x-backend-sharding-state': 'sharded'}
         self.mock_ic.get_container_metadata.return_value = metadata
-        mock_list.return_value = sharded_containers
-        self.crawler.list_containers = mock_list
+        self.mock_ic.iter_containers.return_value = [
+            {'name': container} for container in sharded_containers]
         glob_mock.return_value = sharded_containers
         os.makedirs('%s/.shards_acc' % self.conf['status_dir'])
-        mock_db_info.return_value = None, None, None
-
+        mock_local_dev.return_value = False
         container_setting = {
             'account': 'acc',
             'container': 'foo'}
         self.crawler._process_container(container_setting)
-        expected = [
-            mock.call(
-                {'account': '.shards_acc',
-                 'container': sc,
-                 'root_account': 'acc',
-                 'root_container': 'foo'},
-                False) for sc in sharded_containers]
-        expected.append(
-            mock.call(
-                {'account': 'acc',
-                 'container': 'foo',
-                 'root_account': 'acc',
-                 'root_container': 'foo'}, False))
 
-        self.assertEqual(expected, mock_enq.mock_calls)
-
+        self.assertEqual(3, self.crawler.enumerator_queue.unfinished_tasks)
         glob_mock.assert_called_once_with(
             '%s/.shards_acc/foo*' % self.conf['status_dir'])
         os.rmdir('%s/.shards_acc' % self.conf['status_dir'])
