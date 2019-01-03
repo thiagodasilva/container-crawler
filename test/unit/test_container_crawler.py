@@ -875,3 +875,34 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.list_containers('.shards_AUTH_acc', prefix='foo')
         self.mock_ic.iter_containers.assert_called_once_with(
             '.shards_AUTH_acc', prefix='foo')
+
+    def test_local_db_is_sharded(self):
+        # first container is sharded, but second is not
+        sharded_containers = [
+            'bar-etag-ts-1', 'bar-etag-ts-2', 'bar-etag-ts-3']
+        self.mock_ic.iter_containers.return_value = [
+            {'name': container} for container in sharded_containers]
+        self.crawler.conf['containers'] = [
+            {'account': 'foo',
+             'container': 'bar'},
+            {'account': 'qux',
+             'container': 'mos'}
+        ]
+        self.mock_broker.is_sharded.side_effect = [True, False, False, False,
+                                                   False]
+        with self._patch_broker():
+            self.crawler.run_once()
+
+        expected_calls = [mock.call(container, per_account=False)
+                          for container in self.crawler.conf['containers']]
+
+        # add calls to handle sharded containers
+        expected_calls += [
+            mock.call(
+                {'root_account': 'foo',
+                 'account': '.shards_foo',
+                 'root_container': 'bar',
+                 'container': sharded_cont}, per_account=False)
+            for sharded_cont in sharded_containers]
+        self.assertEqual(expected_calls,
+                         self.mock_handler_factory.instance.mock_calls)
