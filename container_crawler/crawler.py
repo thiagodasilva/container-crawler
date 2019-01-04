@@ -386,13 +386,13 @@ class Crawler(object):
                     self.log(
                         'error',
                         'Failed to retrieve container metadata for %s: %s' % (
-                            os.path.join(account, container), repr(err)))
+                            os.path.join(account, container), err.message))
                 metadata = {}
             except Exception as err:
                 self.log(
                     'error',
                     'Failed to retrieve container metadata for %s: %s' % (
-                        os.path.join(account, container), repr(err)))
+                        os.path.join(account, container), err.message))
                 metadata = {}
 
         return metadata and metadata['x-backend-sharding-state'] == 'sharded'

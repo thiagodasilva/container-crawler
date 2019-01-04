@@ -11,6 +11,7 @@ import time
 import unittest
 
 from swift.common.utils import Timestamp
+from swift.common.internal_client import UnexpectedResponse
 
 from container_crawler import crawler
 from container_crawler.base_sync import BaseSync
@@ -824,6 +825,40 @@ class TestContainerCrawler(unittest.TestCase):
         glob_mock.assert_called_once_with(
             '%s/.shards_acc/foo*' % self.conf['status_dir'])
         os.rmdir('%s/.shards_acc' % self.conf['status_dir'])
+
+    def test_is_sharded_container_error(self):
+        # first, just a sanity test
+        metadata = {'x-backend-sharding-state': 'sharded'}
+        self.mock_ic.get_container_metadata.return_value = metadata
+        self.assertTrue(self.crawler._is_container_sharded('foo', 'bar'))
+
+        # if container doesn't exist just return false, don't log error
+        logger = mock.Mock()
+        self.crawler.logger = logger
+        mock_resp = mock.Mock()
+        mock_resp.status_int = 404
+        self.mock_ic.get_container_metadata.side_effect = UnexpectedResponse(
+            "fail", mock_resp)
+        self.assertFalse(self.crawler._is_container_sharded('foo', 'bar'))
+        logger.error.assert_not_called()
+
+        # Other unexpected error
+        logger.reset_mock()
+        mock_resp.status_int = 501
+        self.assertFalse(self.crawler._is_container_sharded('foo', 'bar'))
+        self.assertEqual(
+            [mock.call(
+                "Failed to retrieve container metadata for foo/bar: fail")],
+            self.crawler.logger.error.mock_calls)
+
+        # generic Exception
+        logger.reset_mock()
+        self.mock_ic.get_container_metadata.side_effect = Exception("genfail")
+        self.assertFalse(self.crawler._is_container_sharded('foo', 'bar'))
+        self.assertEqual(
+            [mock.call(
+                "Failed to retrieve container metadata for foo/bar: genfail")],
+            self.crawler.logger.error.mock_calls)
 
     def _prepare_status_dir(self, acc_status_dir, containers):
         # setup status dir with fake status files
