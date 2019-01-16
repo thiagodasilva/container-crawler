@@ -440,8 +440,8 @@ class TestContainerCrawler(unittest.TestCase):
             '%s/%s' % (self.conf['status_dir'], account))
         expected_handler_calls = [
             mock.call({'account': account,
-                       'root_account': account,
-                       'root_container': container,
+                       'internal_account': account,
+                       'internal_container': container,
                        'container': container},
                       per_account=True)
             for container in test_containers]
@@ -814,7 +814,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_ic.iter_containers.return_value = [
             {'name': container} for container in sharded_containers]
         glob_mock.return_value = sharded_containers
-        os.makedirs('%s/.shards_acc' % self.conf['status_dir'])
+        os.mkdir('%s/.shards_acc' % self.conf['status_dir'])
         mock_local_dev.return_value = False
         container_setting = {
             'account': 'acc',
@@ -824,7 +824,6 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(3, self.crawler.enumerator_queue.unfinished_tasks)
         glob_mock.assert_called_once_with(
             '%s/.shards_acc/foo*' % self.conf['status_dir'])
-        os.rmdir('%s/.shards_acc' % self.conf['status_dir'])
 
     def test_is_sharded_container_error(self):
         # first, just a sanity test
@@ -863,9 +862,9 @@ class TestContainerCrawler(unittest.TestCase):
     def _prepare_status_dir(self, acc_status_dir, containers):
         # setup status dir with fake status files
         os.makedirs(acc_status_dir)
-        for f in containers:
-            p = os.path.join(acc_status_dir, f)
-            open(p, 'a').close()
+        for cont_status in containers:
+            with open(os.path.join(acc_status_dir, cont_status), 'w'):
+                pass
 
     def test_prune_deleted_containers(self):
         acc = 'testacc'
@@ -923,6 +922,7 @@ class TestContainerCrawler(unittest.TestCase):
             {'account': 'qux',
              'container': 'mos'}
         ]
+
         self.mock_broker.is_sharded.side_effect = [True, False, False, False,
                                                    False]
         with self._patch_broker():
@@ -934,10 +934,10 @@ class TestContainerCrawler(unittest.TestCase):
         # add calls to handle sharded containers
         expected_calls += [
             mock.call(
-                {'root_account': 'foo',
-                 'account': '.shards_foo',
-                 'root_container': 'bar',
-                 'container': sharded_cont}, per_account=False)
+                {'account': 'foo',
+                 'internal_account': '.shards_foo',
+                 'container': 'bar',
+                 'internal_container': sharded_cont}, per_account=False)
             for sharded_cont in sharded_containers]
         self.assertEqual(expected_calls,
                          self.mock_handler_factory.instance.mock_calls)
