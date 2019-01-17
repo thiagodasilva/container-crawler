@@ -2,6 +2,7 @@ import eventlet
 import eventlet.pools
 eventlet.patcher.monkey_patch(all=True)
 
+import glob
 import os.path
 import time
 import threading
@@ -9,6 +10,8 @@ import traceback
 
 from swift.common.ring import Ring
 from swift.common.ring.utils import is_local_device
+from swift.common.internal_client import UnexpectedResponse
+from swift.common.http import HTTP_NOT_FOUND
 from swift.common.utils import config_true_value, decode_timestamps,\
     hash_path, storage_directory, whataremyips
 
@@ -179,13 +182,18 @@ class Crawler(object):
                     break
 
                 settings, per_account = work
+                account = settings['internal_account']
+                container = settings['internal_container']
+
                 # Should we try caching the broker to avoid doing these
                 # look ups every time?
                 broker, nodes_count, node_id = self.get_broker(
-                    settings['account'].encode('utf-8'),
-                    settings['container'].encode('utf-8'))
+                    account.encode('utf-8'), container.encode('utf-8'))
                 if not broker:
                     continue
+
+                if broker.is_sharded():
+                    self._enqueue_sharded_container(settings, per_account)
 
                 broker_id = broker.get_info()['id']
                 handler = self.handler_factory.instance(
@@ -199,7 +207,7 @@ class Crawler(object):
                     self.log(
                         'info', 'Processing %d rows since row %d for %s/%s' % (
                             len(primary_rows), last_primary_row,
-                            settings['account'], settings['container']))
+                            account, container))
                     primary_status = self.submit_items(
                         handler, primary_rows, job)
                     if ContainerJob.PASS_SUCCEEDED == primary_status:
@@ -209,7 +217,7 @@ class Crawler(object):
                             'info',
                             'Processed %d rows; last row: %d; for %s/%s' % (
                                 len(primary_rows), primary_rows[-1]['ROWID'],
-                                settings['account'], settings['container']))
+                                account, container))
 
                 last_verified_row = handler.get_last_verified_row(broker_id)
                 verifying_rows = self._get_new_rows(
@@ -225,7 +233,7 @@ class Crawler(object):
                     self.log(
                         'info', 'Verifying %d rows since row %d for %s/%s' % (
                             len(verifying_rows), last_verified_row,
-                            settings['account'], settings['container']))
+                            account, container))
                     verifying_status = self.submit_items(
                         handler, verifying_rows, job)
                     if ContainerJob.PASS_SUCCEEDED == verifying_status:
@@ -236,28 +244,25 @@ class Crawler(object):
                                  'for %s/%s' % (
                                      len(verifying_rows),
                                      verifying_rows[-1]['ROWID'],
-                                     settings['account'],
-                                     settings['container']))
+                                     account, container))
 
             except SkipContainer:
                 self.log(
-                    'info', "Skipping %(account)s/%(container)s" % settings)
+                    'info', "Skipping %s/%s" % (account, container))
             except RetryError:
                 # Can appear from the bulk handling code.
                 # TODO: we should do a better job tying the bulk handling code
                 # into this model.
                 pass
             except:
-                account = settings['account']
-                container = settings['container']
                 self.log('error', "Failed to process %s/%s with %s" % (
-                    account, container,
-                    str(self.handler_factory)))
+                    account, container, str(self.handler_factory)))
                 self.log('error', traceback.format_exc())
             finally:
                 if work:
                     self._in_progress_containers.remove(
-                        (work[0]['account'], work[0]['container']))
+                        (work[0]['internal_account'],
+                         work[0]['internal_container']))
                 self.enumerator_queue.task_done()
 
     def log(self, level, message):
@@ -265,13 +270,15 @@ class Crawler(object):
             return
         getattr(self.logger, level)(message)
 
-    def get_broker(self, account, container):
-        """Instatiates a container database broker.
+    def _get_db_info(self, account, container):
+        """
+        Returns the database path of the container
 
         :param account: UTF-8 encoded account name
         :param container: UTF-8 encoded container name
-        :returns: ContainerBroker (or None if the DB cannot be found)
+        :returns: a tuple of (db path, nodes count, index of replica)
         """
+
         part, container_nodes = self.container_ring.get_nodes(
             account, container)
         nodes_count = len(container_nodes)
@@ -284,6 +291,18 @@ class Crawler(object):
                 continue
             db_path = os.path.join(
                 self.root, node['device'], db_dir, db_hash + '.db')
+            return db_path, nodes_count, index
+        return None, None, None
+
+    def get_broker(self, account, container):
+        """Instatiates a container database broker.
+
+        :param account: UTF-8 encoded account name
+        :param container: UTF-8 encoded container name
+        :returns: a tuple of (ContainerBroker, nodes count, index of replica)
+        """
+        db_path, nodes_count, index = self._get_db_info(account, container)
+        if db_path:
             broker = ContainerBroker(
                 db_path, account=account, container=container)
             if not broker.is_deleted():
@@ -316,10 +335,11 @@ class Crawler(object):
     def _is_processing(self, settings):
         # NOTE: if we allow more than one destination for (account, container),
         # we have to change the contents of this set
-        key = (settings['account'], settings['container'])
+        key = (settings['internal_account'],
+               settings['internal_container'])
         return key in self._in_progress_containers
 
-    def _prune_deleted_containers(self, settings, containers):
+    def _prune_deleted_containers(self, account, containers, prefix=None):
         # After iterating over all of the containers, we prune any
         # entries from containers that may have been deleted (so as to
         # avoid missing data). There is still a chance where a
@@ -328,10 +348,18 @@ class Crawler(object):
         # TODO: keep track of container creation date to detect when
         # they are removed and then added.
         account_status_dir = os.path.join(
-            self.status_dir, settings['account']).encode('utf-8')
+            self.status_dir, account.encode('utf-8'))
         if not os.path.exists(account_status_dir):
             return
-        tracked_containers = os.listdir(account_status_dir)
+
+        if prefix:
+            container_paths = glob.glob(
+                os.path.join(account_status_dir, prefix + '*'))
+            tracked_containers = [
+                os.path.basename(path) for path in container_paths]
+        else:
+            tracked_containers = os.listdir(account_status_dir)
+
         disappeared = set(tracked_containers) - set(
             map(lambda container: container.encode('utf-8'), containers))
         for container in disappeared:
@@ -341,12 +369,86 @@ class Crawler(object):
                 self.log(
                     'warning',
                     'Failed to remove the status file for %s: %s' % (
-                        os.path.join(settings['account'], container), repr(e)))
+                        os.path.join(account, container), repr(e)))
+
+    def _is_container_sharded(self, account, container):
+        """
+        Retrieve container metadata with a HEAD request and
+        find out if container is sharded.
+        :returns: True if container is sharded. False otherwise.
+        """
+        with self._swift_pool.item() as swift_client:
+            try:
+                metadata = swift_client.get_container_metadata(
+                    account, container)
+            except UnexpectedResponse as err:
+                if err.resp.status_int != HTTP_NOT_FOUND:
+                    self.log(
+                        'error',
+                        'Failed to retrieve container metadata for %s: %s' % (
+                            os.path.join(account, container), err.message))
+                metadata = {}
+            except Exception as err:
+                self.log(
+                    'error',
+                    'Failed to retrieve container metadata for %s: %s' % (
+                        os.path.join(account, container), err.message))
+                metadata = {}
+
+        return metadata.get('x-backend-sharding-state') == 'sharded'
+
+    def _enqueue_sharded_container(self, settings, per_account=False):
+        """
+        Get list of shards for a given containers and add them to the
+        work queue.
+        """
+        # TODO: look into saving the sharded state of the container
+        sharded_account = '.shards_' + settings['account']
+        sharded_container = settings['container']
+        all_sharded_containers = self.list_containers(
+            sharded_account, prefix=sharded_container)
+        for container in all_sharded_containers:
+            settings_copy = settings.copy()
+            settings_copy['internal_account'] = sharded_account
+            settings_copy['internal_container'] = container
+            self._enqueue_container(settings_copy, per_account)
+        self._prune_deleted_containers(
+            sharded_account, all_sharded_containers,
+            prefix=sharded_container)
+
+    def _process_container(self, settings, per_account=False):
+        # save internal account/containers as the actual account/containers
+        # that will be crawled. This is currently useful for sharded containers
+        account = settings['account']
+        container = settings['container']
+        settings['internal_account'] = account
+        settings['internal_container'] = container
+
+        try:
+            db_path, _, _ = self._get_db_info(
+                account.encode('utf-8'), container.encode('utf-8'))
+        except:
+            self.log('error', "Failed to process %s/%s" % (
+                account, container))
+            self.log('error', traceback.format_exc())
+            return
+
+        # if container db is not on local node, we need to check
+        # if container is sharded with a HEAD request because
+        # shards of that container could potentially be stored on this node
+        # even if root container is not. Otherwise we check if container is
+        # sharded when we have the broker.
+        if db_path:
+            self._enqueue_container(settings, per_account)
+        elif self._is_container_sharded(account, container):
+            self._enqueue_sharded_container(settings, per_account)
 
     def _enqueue_container(self, settings, per_account=False):
-        key = (settings['account'], settings['container'])
-        self._in_progress_containers.add(key)
-        self.enumerator_queue.put((settings, per_account))
+        if not self._is_processing(settings):
+            key = (settings['internal_account'],
+                   settings['internal_container'])
+            self._in_progress_containers.add(key)
+            self.enumerator_queue.put((settings, per_account))
 
     def _submit_containers(self):
         for container_settings in self.conf['containers']:
@@ -368,17 +470,13 @@ class Crawler(object):
                 for container in all_containers:
                     settings_copy = container_settings.copy()
                     settings_copy['container'] = container
-                    if not self._is_processing(settings_copy):
-                        self._enqueue_container(
-                            settings_copy, per_account=True)
+                    self._process_container(settings_copy, per_account=True)
 
                 # clean status dir off containers that have been deleted
-                self._prune_deleted_containers(container_settings,
+                self._prune_deleted_containers(container_settings['account'],
                                                all_containers)
             else:
-                if not self._is_processing(container_settings):
-                    self._enqueue_container(container_settings,
-                                            per_account=False)
+                self._process_container(container_settings)
 
     def run_always(self):
         # Since we don't support reloading, the daemon should quit if there are
