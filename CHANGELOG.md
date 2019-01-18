@@ -1,3 +1,12 @@
+## 0.1.2 (2019-01-17)
+
+Improvements:
+
+- Added support for crawling sharded Swift container. Container sharding is
+  an OpenStack Swift feature that allows a single container database to be
+  distributed across many smaller databases. This improvement does not require
+  any changes in downstream consumers.
+
 ## 0.1.1 (2018-12-14)
 
 Improvements:
