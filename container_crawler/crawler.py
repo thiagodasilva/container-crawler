@@ -200,7 +200,9 @@ class Crawler(object):
                     settings, per_account=per_account)
 
                 last_primary_row = handler.get_last_processed_row(broker_id)
-                handler.handle_container_metadata(broker.metadata, broker_id)
+                if broker.is_root_container():
+                    handler.handle_container_metadata(broker.metadata,
+                                                      broker_id)
                 primary_rows = self._get_new_rows(
                     broker, last_primary_row, nodes_count, node_id, False)
                 if primary_rows:

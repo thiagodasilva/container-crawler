@@ -430,6 +430,7 @@ class TestContainerCrawler(unittest.TestCase):
             (mock.call.is_deleted(),
              mock.call.is_sharded(),
              mock.call.get_info(),
+             mock.call.is_root_container(),
              mock.call.get_items_since(5000, 1000),
              mock.call.get_items_since(10, 1000))
             for _ in test_containers]
@@ -925,6 +926,8 @@ class TestContainerCrawler(unittest.TestCase):
 
         self.mock_broker.is_sharded.side_effect = [True, False, False, False,
                                                    False]
+        self.mock_broker.is_root_container.side_effect = [True, False, False,
+                                                          False, False]
         with self._patch_broker():
             self.crawler.run_once()
 
@@ -941,3 +944,4 @@ class TestContainerCrawler(unittest.TestCase):
             for sharded_cont in sharded_containers]
         self.assertEqual(expected_calls,
                          self.mock_handler_factory.instance.mock_calls)
+        self.mock_handler.handle_container_metadata.assert_called_once()
