@@ -1,3 +1,9 @@
+## 0.1.3 (2019-02-08)
+
+Improvements:
+
+- Only attempts to sync container metadata for root sharded containers.
+
 ## 0.1.2 (2019-01-17)
 
 Improvements:
