@@ -279,13 +279,17 @@ class TestContainerCrawler(unittest.TestCase):
             self.crawler.run_once()
 
         self.assertEqual(
-            [mock.call("Failed to handle row %d (%s): 'traceback'" % (
+            [mock.call("Failed to handle row %d (%s): fail" % (
                        row['ROWID'], row['name'].decode('utf-8')))],
             self.crawler.logger.error.mock_calls)
+        self.assertEqual(
+            [mock.call("Failed to handle row %d (%s): 'traceback'" % (
+                       row['ROWID'], row['name'].decode('utf-8')))],
+            self.crawler.logger.debug.mock_calls)
 
     @mock.patch('container_crawler.crawler.traceback.format_exc')
     def test_worker_handles_all_exceptions(self, tb_mock):
-        self.mock_handler.handle.side_effect = BaseException('base error')
+        self.mock_handler.handle.side_effect = Exception('foo')
         tb_mock.return_value = 'traceback'
         self.crawler.logger = mock.Mock()
 
@@ -298,10 +302,14 @@ class TestContainerCrawler(unittest.TestCase):
         with self._patch_broker():
             self.crawler.run_once()
 
-        self.assertEqual([mock.call(
-            "Failed to handle row %d (%s): 'traceback'" % (
-                row['ROWID'], row['name'].decode('utf-8')))],
+        self.assertEqual(
+            [mock.call("Failed to handle row %d (%s): foo" % (
+                       row['ROWID'], row['name'].decode('utf-8')))],
             self.crawler.logger.error.mock_calls)
+        self.assertEqual(
+            [mock.call("Failed to handle row %d (%s): 'traceback'" % (
+                       row['ROWID'], row['name'].decode('utf-8')))],
+            self.crawler.logger.debug.mock_calls)
 
     @mock.patch('container_crawler.crawler.traceback.format_exc')
     def test_unicode_container_account_failure(self, tb_mock):
