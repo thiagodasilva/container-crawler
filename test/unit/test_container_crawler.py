@@ -31,7 +31,7 @@ class TestContainerCrawler(unittest.TestCase):
                                 'device': '/dev/sda'}])))
         mock_ring.return_value = self.mock_ring
         self.mock_handler = mock.Mock(
-            handle_container_metadata=mock.Mock(return_value=None),
+            handle_container_info=mock.Mock(return_value=None),
             get_last_processed_row=mock.Mock(return_value=42),
             get_last_verified_row=mock.Mock(return_value=21))
         self.mock_handler_factory = mock.Mock(
@@ -92,7 +92,7 @@ class TestContainerCrawler(unittest.TestCase):
                 handler.handle.reset_mock()
                 handler.save_last_processed_row.reset_mock()
                 handler.save_last_verified_row.reset_mock()
-                handler.handle_container_metadata.reset_mock()
+                handler.handle_container_info.reset_mock()
                 logger.info.reset_mock()
 
                 handle_calls = filter(lambda x: x % nodes == node_id,
@@ -117,8 +117,8 @@ class TestContainerCrawler(unittest.TestCase):
                         items[verify_calls[-1]]['ROWID'],
                         self.mock_broker.get_info()['id'])
 
-                handler.handle_container_metadata.assert_called_once_with(
-                    {}, mock.ANY)
+                handler.handle_container_info.assert_called_once_with(
+                    mock.ANY, {})
                 logging_calls = [
                     mock.call('Processing %d rows since row %d for %s/%s' % (
                         len(handle_calls), 42, 'account', 'container')),
@@ -416,7 +416,7 @@ class TestContainerCrawler(unittest.TestCase):
             def save_last_processed_row(self, row_id, db_id):
                 pass
 
-            def handle_container_metadata(self, metadata, db_id):
+            def handle_container_info(self, container_info, metadata):
                 pass
 
             def save_last_verified_row(self, row_id, db_id):
@@ -952,4 +952,4 @@ class TestContainerCrawler(unittest.TestCase):
             for sharded_cont in sharded_containers]
         self.assertEqual(expected_calls,
                          self.mock_handler_factory.instance.mock_calls)
-        self.mock_handler.handle_container_metadata.assert_called_once()
+        self.mock_handler.handle_container_info.assert_called_once()

@@ -199,14 +199,14 @@ class Crawler(object):
                 if broker.is_sharded():
                     self._enqueue_sharded_container(settings, per_account)
 
-                broker_id = broker.get_info()['id']
+                broker_info = broker.get_info()
+                broker_id = broker_info['id']
                 handler = self.handler_factory.instance(
                     settings, per_account=per_account)
 
                 last_primary_row = handler.get_last_processed_row(broker_id)
                 if broker.is_root_container():
-                    handler.handle_container_metadata(broker.metadata,
-                                                      broker_id)
+                    handler.handle_container_info(broker_info, broker.metadata)
                 primary_rows = self._get_new_rows(
                     broker, last_primary_row, nodes_count, node_id, False)
                 if primary_rows:

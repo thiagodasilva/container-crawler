@@ -47,6 +47,6 @@ class BaseSync(object):
     def save_last_verified_row(self, row_id, db_id):
         raise NotImplementedError
 
-    def handle_container_metadata(self, metadata_dict, db_id):
+    def handle_container_info(self, broker_info, metadata):
         # Optional to implement
         pass
