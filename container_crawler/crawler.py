@@ -127,10 +127,11 @@ class Crawler(object):
         while 1:
             try:
                 work = self.work_queue.get()
-            except:
-                self.log(
-                    'error', 'Failed to fetch items from the queue: %s' %
-                    traceback.format_exc())
+            except Exception as e:
+                self.log('error', 'Failed to fetch items from the queue: %s' %
+                         str(e))
+                self.log('debug', 'Failed to fetch items from the queue: %s' %
+                         traceback.format_exc())
                 eventlet.sleep(100)
                 continue
 
@@ -144,9 +145,12 @@ class Crawler(object):
                 container_job.complete_task()
             except RetryError:
                 container_job.complete_task(retry=True)
-            except:
+            except Exception as e:
                 container_job.complete_task(error=True)
-                self.log('error', u'Failed to handle row %s (%s): %r' % (
+                self.log('error', u'Failed to handle row %s (%s): %s' % (
+                    row['ROWID'], row['name'].decode('utf-8'),
+                    str(e)))
+                self.log('debug', u'Failed to handle row %s (%s): %r' % (
                     row['ROWID'], row['name'].decode('utf-8'),
                     traceback.format_exc()))
             finally:
