@@ -953,3 +953,14 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(expected_calls,
                          self.mock_handler_factory.instance.mock_calls)
         self.mock_handler.handle_container_info.assert_called_once()
+
+    def test_missing_db(self):
+        self.mock_broker.is_deleted = mock.Mock(return_value=True)
+        self.crawler.logger = mock.Mock()
+        with self._patch_broker():
+            self.crawler.run_once()
+
+        self.crawler.logger.info.has_calls(
+            mock.call('Database does not exist for %s/%s' %
+                      (self.conf['containers'][0]['account'],
+                       self.conf['containers'][0]['container'])))

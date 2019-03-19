@@ -311,7 +311,10 @@ class Crawler(object):
         if db_path:
             broker = ContainerBroker(
                 db_path, account=account, container=container)
-            if not broker.is_deleted():
+            if broker.is_deleted():
+                self.log('info', 'Database does not exist for %s/%s' %
+                         (account, container))
+            else:
                 return broker, nodes_count, index
         return None, None, None
 
