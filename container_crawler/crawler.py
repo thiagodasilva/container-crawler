@@ -3,6 +3,7 @@ import eventlet.pools
 eventlet.patcher.monkey_patch(all=True)
 
 import glob
+import hashlib
 import os.path
 import time
 import threading
@@ -19,6 +20,9 @@ from swift.container.backend import DATADIR, ContainerBroker
 
 from .exceptions import RetryError, SkipContainer
 from .utils import create_internal_client
+
+
+HEXDIGITS = 6  # Digits to use from hash of name for sharding
 
 
 class ContainerJob(object):
@@ -68,6 +72,10 @@ class ContainerJob(object):
                 self._retry = retry
             if self._outstanding == 0:
                 self._done.notify()
+
+
+def num_from_row(row):
+    return int(hashlib.sha1(row['name']).hexdigest()[-HEXDIGITS:], 16)
 
 
 class Crawler(object):
@@ -161,7 +169,8 @@ class Crawler(object):
         if verifying:
             cutoff = time.time() - self._verification_slack
         for row in broker.get_items_since(start_row, self.items_chunk):
-            if not verifying and row['ROWID'] % nodes != node_id:
+            hnum = num_from_row(row)
+            if not verifying and hnum % nodes != node_id:
                 continue
             ts = decode_timestamps(row['created_at'])[2].timestamp
             if verifying and ts > cutoff:

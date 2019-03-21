@@ -70,7 +70,12 @@ class TestContainerCrawler(unittest.TestCase):
             mock_broker.return_value = self.mock_broker
             yield mock_broker
 
-    def test_enumerator_worker(self):
+    @mock.patch('container_crawler.crawler.num_from_row')
+    def test_enumerator_worker(self, num_from_row):
+        def my_num_from_row(row):
+            return row['ROWID']
+
+        num_from_row.side_effect = my_num_from_row
         total_rows = 100
         items = [{'ROWID': x, 'created_at': Timestamp(time.time())}
                  for x in range(total_rows)]
@@ -138,7 +143,12 @@ class TestContainerCrawler(unittest.TestCase):
                                      'account', 'container')))
                 self.assertEqual(logging_calls, logger.info.mock_calls)
 
-    def test_bulk_handling(self):
+    @mock.patch('container_crawler.crawler.num_from_row')
+    def test_bulk_handling(self, num_from_row):
+        def my_num_from_row(row):
+            return row['ROWID']
+
+        num_from_row.side_effect = my_num_from_row
         self.conf['bulk_process'] = 'true'
         self._setup_mocked_crawler()
         self.assertEqual(self.crawler.bulk, True)
@@ -203,7 +213,12 @@ class TestContainerCrawler(unittest.TestCase):
              mock.call.error(tb_mock.format_exc.return_value)],
             self.crawler.logger.mock_calls)
 
-    def test_enumerator_handling_rows_errors(self):
+    @mock.patch('container_crawler.crawler.num_from_row')
+    def test_enumerator_handling_rows_errors(self, num_from_row):
+        def my_num_from_row(row):
+            return row['ROWID']
+
+        num_from_row.side_effect = my_num_from_row
         rows = 10
         items = [{'ROWID': x, 'name': str(x),
                   'created_at': Timestamp(time.time())}
@@ -229,7 +244,12 @@ class TestContainerCrawler(unittest.TestCase):
                         for row_id in handle_rows + verify_rows]
             self.assertEqual(expected, self.mock_handler.handle.call_args_list)
 
-    def test_enumerator_verify_items_errors(self):
+    @mock.patch('container_crawler.crawler.num_from_row')
+    def test_enumerator_verify_items_errors(self, num_from_row):
+        def my_num_from_row(row):
+            return row['ROWID']
+
+        num_from_row.side_effect = my_num_from_row
         rows = 10
         items = [{'ROWID': x, 'name': str(x),
                   'created_at': Timestamp(time.time())}
