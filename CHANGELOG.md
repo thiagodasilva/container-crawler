@@ -1,3 +1,15 @@
+## 0.1.4 (2019-03-22)
+
+Improvements:
+
+- Added log messages when container DBs do not exist.
+- Expanded the API to allow clients to get container information (as well as
+  container metadata). The `handle_container_metadata()` method changed to
+  `handle_container_info()`.
+- Uses the object name to shard the work between "primary"/"verification", as
+  opposed to row IDs. This leads to a consistent partitioning regardless of row
+  ID inconsistencies across databases.
+
 ## 0.1.3 (2019-02-08)
 
 Improvements:
