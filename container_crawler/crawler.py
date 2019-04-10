@@ -7,7 +7,6 @@ import hashlib
 import os.path
 import time
 import threading
-import traceback
 
 from swift.common.ring import Ring
 from swift.common.ring.utils import is_local_device
@@ -136,10 +135,10 @@ class Crawler(object):
             try:
                 work = self.work_queue.get()
             except Exception as e:
-                self.log('error', 'Failed to fetch items from the queue: %s' %
-                         str(e))
-                self.log('debug', 'Failed to fetch items from the queue: %s' %
-                         traceback.format_exc())
+                self.log(
+                    'error', 'Failed to fetch items from the queue: %r' % e)
+                self.log('debug', 'Failed to fetch items from the queue: %s',
+                         exc_info=True)
                 eventlet.sleep(100)
                 continue
 
@@ -155,12 +154,10 @@ class Crawler(object):
                 container_job.complete_task(retry=True)
             except Exception as e:
                 container_job.complete_task(error=True)
-                self.log('error', u'Failed to handle row %s (%s): %s' % (
-                    row['ROWID'], row['name'].decode('utf-8'),
-                    str(e)))
-                self.log('debug', u'Failed to handle row %s (%s): %r' % (
-                    row['ROWID'], row['name'].decode('utf-8'),
-                    traceback.format_exc()))
+                self.log('error', u'Failed to handle row %s (%s): %r' % (
+                    row['ROWID'], row['name'].decode('utf-8'), e))
+                self.log('debug', u'Failed to handle row %s (%s)' % (
+                    row['ROWID'], row['name'].decode('utf-8')), exc_info=True)
             finally:
                 self.work_queue.task_done()
 
@@ -185,8 +182,8 @@ class Crawler(object):
                 work = self.enumerator_queue.get()
             except:
                 self.log(
-                    'error', 'Failed to fetch containers to enumerate %s' %
-                    traceback.format_exc())
+                    'error', 'Failed to fetch containers to enumerate',
+                    exc_info=True)
                 eventlet.sleep(100)
                 continue
 
@@ -271,8 +268,8 @@ class Crawler(object):
                 pass
             except:
                 self.log('error', "Failed to process %s/%s with %s" % (
-                    account, container, str(self.handler_factory)))
-                self.log('error', traceback.format_exc())
+                    account, container, str(self.handler_factory)),
+                    exc_info=True)
             finally:
                 if work:
                     self._in_progress_containers.remove(
@@ -280,10 +277,10 @@ class Crawler(object):
                          work[0]['internal_container']))
                 self.enumerator_queue.task_done()
 
-    def log(self, level, message):
+    def log(self, level, message, **kwargs):
         if not self.logger:
             return
-        getattr(self.logger, level)(message)
+        getattr(self.logger, level)(message, **kwargs)
 
     def _get_db_info(self, account, container):
         """
@@ -447,8 +444,7 @@ class Crawler(object):
                 account.encode('utf-8'), container.encode('utf-8'))
         except:
             self.log('error', "Failed to process %s/%s" % (
-                account, container))
-            self.log('error', traceback.format_exc())
+                account, container), exc_info=True)
             return
 
         # if container db is not on local node, we need to check
