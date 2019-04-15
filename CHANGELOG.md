@@ -1,3 +1,11 @@
+## 0.1.5 (2019-04-15)
+
+Improvements:
+
+- Improve exception logging by exposing the exception type. Previously only
+  exception message was logged which did not prove to be helpful sometimes.
+  Adding exception type should help make logs more informative.
+
 ## 0.1.4 (2019-03-22)
 
 Improvements:
