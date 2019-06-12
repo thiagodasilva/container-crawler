@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from tempfile import mkdtemp
 
+import errno
 import eventlet
 import mock
 import os
@@ -50,6 +51,8 @@ class TestContainerCrawler(unittest.TestCase):
             metadata={})
 
         self.crawler = crawler.Crawler(self.conf, self.mock_handler_factory)
+        self.logger = mock.Mock()
+        self.crawler.logger = self.logger
 
     def setUp(self):
         self.conf = {
@@ -62,6 +65,12 @@ class TestContainerCrawler(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.conf['status_dir'])
+        for call in self.logger.error.mock_calls:
+            print 'Uncaught error: {}'.format(call)
+        for call in self.logger.warn.mock_calls:
+            print 'Uncaught warning: {}'.format(call)
+        self.assertFalse(self.logger.error.mock_calls)
+        self.assertFalse(self.logger.warn.mock_calls)
 
     @contextmanager
     def _patch_broker(self):
@@ -216,6 +225,7 @@ class TestContainerCrawler(unittest.TestCase):
                   'created_at': Timestamp(time.time())}
                  for x in range(rows)]
         self.mock_broker.get_items_since.return_value = items
+        error = RuntimeError('oops')
 
         for node_id in (0, 1):
             all_nodes = [{'ip': '1.2.3.4', 'port': 1234, 'device': '/dev/sda'}
@@ -225,7 +235,7 @@ class TestContainerCrawler(unittest.TestCase):
             self.mock_ring.get_nodes.return_value = ('deadbeef', all_nodes)
 
             self.mock_handler.handle.reset_mock()
-            self.mock_handler.handle.side_effect = RuntimeError('oops')
+            self.mock_handler.handle.side_effect = error
 
             with self._patch_broker():
                 self.crawler.run_once()
@@ -235,6 +245,12 @@ class TestContainerCrawler(unittest.TestCase):
             expected = [mock.call(items[row_id], self.mock_ic)
                         for row_id in handle_rows + verify_rows]
             self.assertEqual(expected, self.mock_handler.handle.call_args_list)
+            expected_errors = [
+                mock.call('Failed to handle row {} ({}): {}'.format(
+                    row_id, items[row_id]['name'], repr(error)))
+                for row_id in handle_rows + verify_rows]
+            self.assertEqual(expected_errors, self.logger.error.mock_calls)
+            self.logger.error.reset_mock()
 
     @mock.patch('container_crawler.crawler.num_from_row')
     def test_enumerator_verify_items_errors(self, num_from_row):
@@ -247,12 +263,13 @@ class TestContainerCrawler(unittest.TestCase):
                   'created_at': Timestamp(time.time())}
                  for x in range(rows)]
         self.mock_broker.get_items_since.return_value = items
+        error = RuntimeError('oops')
 
         for node_id in (0, 1):
             # only fail the verify calls
             def fail_verify(row, client):
                 if row['ROWID'] % 2 != node_id:
-                    raise RuntimeError('oops')
+                    raise error
                 return
 
             all_nodes = [{'ip': '1.2.3.4', 'port': 1234, 'device': '/dev/sda'}
@@ -275,6 +292,12 @@ class TestContainerCrawler(unittest.TestCase):
             self.assertEqual(
                 expected,
                 self.mock_handler.handle.call_args_list)
+            expected_errors = [
+                mock.call('Failed to handle row {} ({}): {}'.format(
+                    row_id, items[row_id]['name'], repr(error)))
+                for row_id in verify_calls]
+            self.assertEqual(expected_errors, self.logger.error.mock_calls)
+            self.logger.error.reset_mock()
 
     def test_unicode_object_failure(self):
         row = {'ROWID': 42,
@@ -399,7 +422,9 @@ class TestContainerCrawler(unittest.TestCase):
 
         self.mock_ic.iter_containers.return_value = [
             {'name': container} for container in test_containers]
-        ls_mock.return_value = test_containers
+        ls_mock.side_effect = (
+            [container.encode('utf-8') for container in test_containers],
+            [account])
         broker_mock.return_value = self.mock_broker
 
         class FakeHandler(BaseSync):
@@ -447,8 +472,11 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(
             reduce(lambda x, y: list(x) + list(y), expected),
             self.mock_broker.mock_calls)
-        ls_mock.assert_called_once_with(
-            '%s/%s' % (self.conf['status_dir'], account))
+        self.assertEqual(
+            [mock.call('{}/{}'.format(self.conf['status_dir'], account)),
+             mock.call(self.conf['status_dir'])],
+            ls_mock.mock_calls)
+
         expected_handler_calls = [
             mock.call({'account': account,
                        'internal_account': account,
@@ -473,16 +501,20 @@ class TestContainerCrawler(unittest.TestCase):
         test_containers = [u'foo', u'bar', u'baz', u'unic\u062fde']
 
         self.mock_ic.iter_containers.return_value = []
-        ls_mock.return_value = [container.encode('utf-8')
-                                for container in test_containers]
+        ls_mock.side_effect = (
+            [container.encode('utf-8') for container in test_containers],
+            [account.encode('utf-8')])
         exists_mock.return_value = True
 
         self.crawler.run_once()
 
         self.mock_ic.iter_containers.assert_called_once_with(account,
                                                              prefix='')
-        ls_mock.assert_called_once_with(
-            ('%s/%s' % (self.conf['status_dir'], account)).encode('utf-8'))
+        self.assertEqual(
+            [mock.call('{}/{}'.format(
+                self.conf['status_dir'], account.encode('utf-8'))),
+             mock.call(self.conf['status_dir'])],
+            ls_mock.mock_calls)
         self.assertEqual([
             mock.call(('%s/%s/%s' % (self.conf['status_dir'], account, cont))
                       .encode('utf-8'))
@@ -736,9 +768,13 @@ class TestContainerCrawler(unittest.TestCase):
     def test_processed_before_verification(self):
         nodes = [{'ip': '1.2.3.4', 'port': 1234, 'device': '/dev/sda'},
                  {'ip': '127.0.0.1', 'port': 1234, 'device': '/dev/sda'}]
-        rows = [{'ROWID': i, 'name': 'obj%d' % i} for i in range(90, 100)]
-        handle_rows = [row for row in rows if row['ROWID'] % 2]
-        verify_rows = [row for row in rows if not row['ROWID'] % 2]
+        rows = [{'ROWID': i, 'name': 'obj%d' % i, 'created_at': 0}
+                for i in range(90, 100)]
+
+        handle_rows = [row for row in rows
+                       if crawler.num_from_row(row) % 2]
+        verify_rows = [row for row in rows
+                       if not crawler.num_from_row(row) % 2]
 
         real_container_job = crawler.ContainerJob()
         mock_job = mock.Mock(wraps=real_container_job)
@@ -825,16 +861,12 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_ic.iter_containers.return_value = [
             {'name': container} for container in sharded_containers]
         glob_mock.return_value = sharded_containers
-        os.mkdir('%s/.shards_acc' % self.conf['status_dir'])
+        os.mkdir('%s/.shards_account' % self.conf['status_dir'])
         mock_local_dev.return_value = False
-        container_setting = {
-            'account': 'acc',
-            'container': 'foo'}
-        self.crawler._process_container(container_setting)
+        self.crawler.run_once()
 
-        self.assertEqual(3, self.crawler.enumerator_queue.unfinished_tasks)
         glob_mock.assert_called_once_with(
-            '%s/.shards_acc/foo*' % self.conf['status_dir'])
+            '%s/.shards_account/container*' % self.conf['status_dir'])
 
     def test_is_sharded_container_error(self):
         # first, just a sanity test
@@ -966,3 +998,121 @@ class TestContainerCrawler(unittest.TestCase):
             mock.call('Database does not exist for %s/%s' %
                       (self.conf['containers'][0]['account'],
                        self.conf['containers'][0]['container'])))
+
+    def _prune_files_test_helper(self, fs_state, mappings, expected,
+                                 extra_files=None):
+        if extra_files is None:
+            extra_files = []
+        # pre-create the tree for testing
+        for account_dir, files in fs_state.items():
+            os.mkdir(os.path.join(self.conf['status_dir'], account_dir))
+            for f in files:
+                open(os.path.join(self.conf['status_dir'], account_dir, f),
+                     'w').close()
+        for f in extra_files:
+            open(os.path.join(self.conf['status_dir'], f), 'w').close()
+
+        self.conf['containers'] = mappings
+        self.crawler.run_once()
+
+        fs_accounts = [acct.decode('utf-8')
+                       for acct in os.listdir(self.conf['status_dir'])]
+        self.assertEqual(set(fs_accounts), set(expected.keys() + extra_files))
+        for acct in fs_accounts:
+            if not os.path.isdir(os.path.join(self.conf['status_dir'], acct)):
+                continue
+            status_files = [
+                status if type(status) == unicode else status.decode('utf-8')
+                for status in os.listdir(os.path.join(self.conf['status_dir'],
+                                                      acct))]
+            self.assertEqual(set(expected[acct]), set(status_files))
+        for f in extra_files:
+            self.assertTrue(
+                os.path.exists(os.path.join(self.conf['status_dir'], f)))
+
+    def test_prune_status_files(self):
+        self._prune_files_test_helper(
+            {u'fo\u00f5': [u'c\u00f5nt1', u'c\u00f5nt2']},
+            [{'account': u'fo\u00f5',
+              'container': u'c\u00f5nt1'}],
+            {u'fo\u00f5': [u'c\u00f5nt1']})
+
+    def test_prune_status_files_ascii(self):
+        self._prune_files_test_helper(
+            {'foo': ['cont1', 'cont2']},
+            [{'account': 'foo',
+              'container': 'cont1'}],
+            {'foo': ['cont1']})
+
+    def test_prune_status_files_directory(self):
+        self._prune_files_test_helper(
+            {u'fo\u00f5': [u'c\u00f5nt1'],
+             u'b\u00e0r': [u'b\u00e0r'],
+             u'q\u00f9x': []},
+            [{'account': u'fo\u00f5',
+              'container': u'c\u00f5nt1'}],
+            {u'fo\u00f5': [u'c\u00f5nt1']})
+
+    def test_does_not_prune_shards(self):
+        self._prune_files_test_helper(
+            {u'fo\u00f5': [u'c\u00f5nt1'],
+             u'.shards_blah-bla\u00f9': [u'b\u00e0r']},
+            [{'account': u'fo\u00f5',
+              'container': u'c\u00f5nt1'}],
+            {u'fo\u00f5': [u'c\u00f5nt1'],
+             u'.shards_blah-bla\u00f9': [u'b\u00e0r']})
+
+    def test_does_not_prune_per_account(self):
+        self.crawler.list_containers = mock.Mock(return_value=[
+            u'c\u00f5nt1', u'c\u00f5nt2'])
+
+        self._prune_files_test_helper(
+            {u'fo\u00f5': [u'c\u00f5nt1', u'c\u00f5nt2']},
+            [{'account': u'fo\u00f5',
+              'container': '/*'}],
+            {u'fo\u00f5': [u'c\u00f5nt1', u'c\u00f5nt2']})
+
+    def test_prune_status_files_for_invalid_mappings(self):
+        self._prune_files_test_helper(
+            {u'fo\u00f5': [u'c\u00f5nt1', u'c\u00f5nt2']},
+            [{'account': u'fo\u00f5'}],
+            {})
+        self.logger.error.assert_called_once_with(
+            'Container name not specified in settings -- continue')
+        self.logger.reset_mock()
+
+    @mock.patch('container_crawler.crawler.shutil.rmtree')
+    def test_prune_status_handles_rmtree_errors(self, rmtree_mock):
+        err = OSError('Failed to remove', errno.ENOENT)
+        rmtree_mock.side_effect = err
+        self._prune_files_test_helper(
+            {u'fo\u00f5': [u'c\u00f5nt1', u'c\u00f5nt2']}, [],
+            {u'fo\u00f5': [u'c\u00f5nt1', u'c\u00f5nt2']})
+        self.logger.warn.assert_called_once_with(
+            'Failed to remove {}/{}: {}'.format(
+                self.conf['status_dir'], u'fo\u00f5'.encode('utf-8'), err))
+        self.logger.reset_mock()
+
+    @mock.patch('container_crawler.crawler.os.unlink')
+    def test_prune_status_handles_unlink_errors(self, unlink_mock):
+        err = OSError('Failed to remove', errno.ENOENT)
+        unlink_mock.side_effect = err
+        self._prune_files_test_helper(
+            {u'fo\u00f5': [u'c\u00f5nt1', u'c\u00f5nt2']},
+            [{'account': u'fo\u00f5', 'container': u'c\u00f5nt1'}],
+            {u'fo\u00f5': [u'c\u00f5nt1', u'c\u00f5nt2']})
+        self.logger.warn.assert_called_once_with(
+            'Failed to remove {}/{}/{}: {}'.format(
+                self.conf['status_dir'], u'fo\u00f5'.encode('utf-8'),
+                u'c\u00f5nt2'.encode('utf-8'), err))
+        self.logger.reset_mock()
+
+    def test_prune_status_extra_files(self):
+        self._prune_files_test_helper(
+            {u'fo\u00f5': [u'c\u00f5nt1'],
+             u'b\u00e0r': [u'b\u00e0r'],
+             u'q\u00f9x': []},
+            [{'account': u'fo\u00f5',
+              'container': u'c\u00f5nt1'}],
+            {u'fo\u00f5': [u'c\u00f5nt1']},
+            ['other-status.file'])

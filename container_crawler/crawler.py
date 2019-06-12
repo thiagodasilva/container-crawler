@@ -5,6 +5,7 @@ eventlet.patcher.monkey_patch(all=True)
 import glob
 import hashlib
 import os.path
+import shutil
 import time
 import threading
 
@@ -358,8 +359,8 @@ class Crawler(object):
         # After iterating over all of the containers, we prune any
         # entries from containers that may have been deleted (so as to
         # avoid missing data). There is still a chance where a
-        # container is removed and created between the calls to
-        # CloudSync, however there is nothing we can do about that.
+        # container is removed and created between the iterations, however
+        # there is nothing we can do about that.
         # TODO: keep track of container creation date to detect when
         # they are removed and then added.
         account_status_dir = os.path.join(
@@ -385,6 +386,45 @@ class Crawler(object):
                     'warning',
                     'Failed to remove the status file for %s: %s' % (
                         os.path.join(account, container), repr(e)))
+
+    def _prune_status_files(self):
+        # Unlike _prune_deleted_containers, which prunes status files from the
+        # per-account mappings, this prunes only unknown status files (i.e. the
+        # mapping was removed).
+        known_mappings = {mapping['account']: set()
+                          for mapping in self.conf['containers']
+                          if mapping.get('container')}
+        for mapping in self.conf['containers']:
+            if 'container' not in mapping:
+                continue
+            known_mappings[mapping['account']].add(mapping['container'])
+
+        for account in os.listdir(unicode(self.status_dir)):
+            account_path = os.path.join(self.status_dir, account)
+            if not os.path.isdir(account_path):
+                continue
+            if account.startswith('.shards_'):
+                # Sharded containers are handled separately
+                continue
+            if account not in known_mappings:
+                try:
+                    shutil.rmtree(account_path)
+                except OSError as e:
+                    self.log('warn', 'Failed to remove {}: {}'.format(
+                        os.path.join(self.status_dir, account.encode('utf-8')),
+                        e))
+                continue
+            if '/*' in known_mappings[account]:
+                continue
+            for container in os.listdir(account_path):
+                if container not in known_mappings[account]:
+                    try:
+                        os.unlink(os.path.join(account_path, container))
+                    except OSError as e:
+                        self.log('warn', 'Failed to remove {}: {}'.format(
+                            os.path.join(account_path.encode('utf-8'),
+                                         unicode(container).encode('utf-8')),
+                            e))
 
     def _is_container_sharded(self, account, container):
         """
@@ -491,6 +531,7 @@ class Crawler(object):
                                                all_containers)
             else:
                 self._process_container(container_settings)
+        self._prune_status_files()
 
     def run_always(self):
         # Since we don't support reloading, the daemon should quit if there are

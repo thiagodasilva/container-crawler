@@ -24,10 +24,12 @@ class TestBaseSync(unittest.TestCase):
             ('%s/%s' % (status_dir, settings['account'])).encode('utf-8'),
             instance._status_account_dir)
 
+    @mock.patch('container_crawler.crawler.os.listdir')
     @mock.patch('container_crawler.utils.InternalClient')
     @mock.patch('container_crawler.crawler.ContainerBroker')
     @mock.patch('container_crawler.crawler.Ring')
-    def test_base_sync_interface(self, mock_ring, mock_broker, mock_ic):
+    def test_base_sync_interface(self, mock_ring, mock_broker, mock_ic,
+                                 mock_listdir):
         '''Test the NOOP base sync implementation.
 
         Guards against API changes.
@@ -72,6 +74,7 @@ class TestBaseSync(unittest.TestCase):
                 'status_dir': '/tmp/status',
                 'containers': [{'account': 'account',
                                 'container': 'container'}]}
+        mock_listdir.return_value = ['account']
 
         logger = mock.Mock()
         crawler = container_crawler.crawler.Crawler(
