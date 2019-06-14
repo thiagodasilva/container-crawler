@@ -4,6 +4,7 @@ eventlet.patcher.monkey_patch(all=True)
 
 import glob
 import hashlib
+import json
 import os.path
 import shutil
 import time
@@ -78,6 +79,10 @@ def num_from_row(row):
     return int(hashlib.sha1(row['name']).hexdigest()[-HEXDIGITS:], 16)
 
 
+def mapping_signature(mapping):
+    return hashlib.md5(json.dumps(mapping, sort_keys=True)).hexdigest()
+
+
 class Crawler(object):
     def __init__(self, conf, handler_factory, logger=None):
         if not handler_factory:
@@ -98,6 +103,10 @@ class Crawler(object):
         self._verification_slack = conf.get('verification_slack', 0) * 60
         self.poll_interval = conf.get('poll_interval', 5)
         self.handler_factory = handler_factory
+        # NOTE: this structure is not protected. Since we use green threads, we
+        # expect a context switch to only occur on blocking calls, so the set
+        # operations should be safe in this context. This can lead to skipping
+        # container cycles unnecessarily if the threading model changes.
         self._in_progress_containers = set()
 
         if self.bulk:
@@ -274,8 +283,7 @@ class Crawler(object):
             finally:
                 if work:
                     self._in_progress_containers.remove(
-                        (work[0]['internal_account'],
-                         work[0]['internal_container']))
+                        mapping_signature(work[0]))
                 self.enumerator_queue.task_done()
 
     def log(self, level, message, **kwargs):
@@ -347,13 +355,6 @@ class Crawler(object):
         with self._swift_pool.item() as swift_client:
             return [c['name'] for c in swift_client.iter_containers(
                 account, prefix=prefix)]
-
-    def _is_processing(self, settings):
-        # NOTE: if we allow more than one destination for (account, container),
-        # we have to change the contents of this set
-        key = (settings['internal_account'],
-               settings['internal_container'])
-        return key in self._in_progress_containers
 
     def _prune_deleted_containers(self, account, containers, prefix=None):
         # After iterating over all of the containers, we prune any
@@ -498,10 +499,9 @@ class Crawler(object):
             self._enqueue_sharded_container(settings, per_account)
 
     def _enqueue_container(self, settings, per_account=False):
-        if not self._is_processing(settings):
-            key = (settings['internal_account'],
-                   settings['internal_container'])
-            self._in_progress_containers.add(key)
+        settings_signature = mapping_signature(settings)
+        if settings_signature not in self._in_progress_containers:
+            self._in_progress_containers.add(settings_signature)
             self.enumerator_queue.put((settings, per_account))
 
     def _submit_containers(self):

@@ -1,5 +1,3 @@
-# -*- coding: UTF-8 -*-
-
 from contextlib import contextmanager
 from tempfile import mkdtemp
 
@@ -546,8 +544,8 @@ class TestContainerCrawler(unittest.TestCase):
             self.mock_handler, rows, mock.ANY)
 
     def test_handle_unicode_account_container(self):
-        account = u'ünìçódê'
-        container = u'c😁ntainer'
+        account = u'\xfcn\xec\xe7\xf3d\xea'
+        container = u'\cU0001f601ntainer'
         self.conf['containers'] = [
             {'account': account,
              'container': container}]
@@ -683,19 +681,8 @@ class TestContainerCrawler(unittest.TestCase):
         self.assertEqual(0, self.crawler.enumerator_queue.unfinished_tasks)
         self.assertEqual(0, len(self.crawler._in_progress_containers))
 
-        self.crawler._submit_containers()
-        self.assertEqual(2, self.crawler.enumerator_queue.unfinished_tasks)
-        map(handler_progress.put, [None] * 2)
-        self.crawler.enumerator_queue.join()
-        self.assertEqual(0, self.crawler.enumerator_queue.unfinished_tasks)
-        self.assertEqual(0, len(self.crawler._in_progress_containers))
-
     def test_one_handler_per_account_containers(self):
         handler_progress = eventlet.queue.Queue()
-
-        def _handle(*args):
-            handler_progress.get()
-            return
 
         mock_handler_instance = mock.Mock()
         mock_handler_instance.handler.side_effect = handler_progress
@@ -709,19 +696,39 @@ class TestContainerCrawler(unittest.TestCase):
 
         self.crawler._submit_containers()
         self.assertEqual(2, self.crawler.enumerator_queue.unfinished_tasks)
-        self.crawler._submit_containers()
-        self.assertEqual(2, self.crawler.enumerator_queue.unfinished_tasks)
         map(handler_progress.put, [None] * 2)
         self.crawler.enumerator_queue.join()
         self.assertEqual(0, self.crawler.enumerator_queue.unfinished_tasks)
         self.assertEqual(0, len(self.crawler._in_progress_containers))
 
+    def test_multiple_settings_identical_container(self):
+        self.crawler.conf['containers'] = [
+            {'account': u'fo\u00f2',
+             'container': u'f\u00f2o'},
+            {'account': u'fo\u00f2',
+             'container': u'f\u00f2o'}]
+
         self.crawler._submit_containers()
-        self.assertEqual(2, self.crawler.enumerator_queue.unfinished_tasks)
-        map(handler_progress.put, [None] * 2)
-        self.crawler.enumerator_queue.join()
-        self.assertEqual(0, self.crawler.enumerator_queue.unfinished_tasks)
-        self.assertEqual(0, len(self.crawler._in_progress_containers))
+        self.assertEqual(1, self.crawler.enumerator_queue.unfinished_tasks)
+
+    def test_multiple_settings_same_container(self):
+        self.crawler.conf['containers'] = [
+            {'account': u'fo\u00f2',
+             'container': u'f\u00f2o',
+             'aws_bucket': 'foo'},
+            {'account': u'f\u00f2o',
+             'container': u'f\u00f2o',
+             'aws_bucket': 'bar',
+             # We do not differentiate based on any additional policy fields at
+             # the moment.
+             'copy_after': 0},
+            {'account': u'f\u00f2o',
+             'container': u'f\u00f2o',
+             'aws_bucket': 'bar',
+             'copy_after': 100}]
+
+        self.crawler._submit_containers()
+        self.assertEqual(3, self.crawler.enumerator_queue.unfinished_tasks)
 
     def test_skip_non_local_containers(self):
         self.mock_handler_factory.instance.side_effect =\
