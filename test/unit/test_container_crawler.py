@@ -44,9 +44,12 @@ class TestContainerCrawler(unittest.TestCase):
             get_items_since=mock.Mock(return_value=[]),
             is_sharded=mock.Mock(return_value=False),
             is_deleted=mock.Mock(return_value=False),
+            is_root_container=mock.Mock(return_value=True),
             # Note that this is slightly different from real symantics as
             # metadata is a property, not a static value
-            metadata={})
+            metadata={},
+            spec=['get_info', 'get_items_since', 'is_sharded', 'is_deleted',
+                  'metadata', 'is_root_container'])
 
         self.crawler = crawler.Crawler(self.conf, self.mock_handler_factory)
         self.logger = mock.Mock()
@@ -1123,3 +1126,10 @@ class TestContainerCrawler(unittest.TestCase):
               'container': u'c\u00f5nt1'}],
             {u'fo\u00f5': [u'c\u00f5nt1']},
             ['other-status.file'])
+
+    def test_pre_sharding_swift(self):
+        delattr(self.mock_broker, 'is_sharded')
+        delattr(self.mock_broker, 'is_root_container')
+
+        with self._patch_broker():
+            self.crawler.run_once()

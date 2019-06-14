@@ -212,7 +212,7 @@ class Crawler(object):
                 if not broker:
                     continue
 
-                if broker.is_sharded():
+                if getattr(broker, 'is_sharded', lambda: False)():
                     self._enqueue_sharded_container(settings, per_account)
 
                 broker_info = broker.get_info()
@@ -221,7 +221,7 @@ class Crawler(object):
                     settings, per_account=per_account)
 
                 last_primary_row = handler.get_last_processed_row(broker_id)
-                if broker.is_root_container():
+                if getattr(broker, 'is_root_container', lambda: True)():
                     handler.handle_container_info(broker_info, broker.metadata)
                 primary_rows = self._get_new_rows(
                     broker, last_primary_row, nodes_count, node_id, False)
