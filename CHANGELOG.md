@@ -1,3 +1,16 @@
+## 0.1.6 (2019-06-17)
+
+Features:
+
+- Allows multiple destinations for a given account/container. The users of the
+  library will be called once for each of the endpoints with the container
+  database row (or rows).
+
+Bug fixes:
+
+- Added the pruning of no-longer used status files. Previously, if an
+  unreferenced by any of the mappings file existed it would remain forever.
+
 ## 0.1.5 (2019-04-15)
 
 Improvements:
