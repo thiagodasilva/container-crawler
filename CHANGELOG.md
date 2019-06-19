@@ -1,3 +1,10 @@
+## 0.1.6.1 (2019-06-19)
+
+Bug fixes:
+
+- Fixed a regression that prevented running unit tests if /dev/sda existed and
+  was not a directory.
+
 ## 0.1.6 (2019-06-17)
 
 Features:
