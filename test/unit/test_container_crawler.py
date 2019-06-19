@@ -27,7 +27,7 @@ class TestContainerCrawler(unittest.TestCase):
                 return_value=('deadbeef',
                               [{'ip': '127.0.0.1',
                                 'port': 1234,
-                                'device': '/dev/sda'}])))
+                                'device': self.device_dir}])))
         mock_ring.return_value = self.mock_ring
         self.mock_handler = mock.Mock(
             handle_container_info=mock.Mock(return_value=None),
@@ -56,6 +56,7 @@ class TestContainerCrawler(unittest.TestCase):
         self.crawler.logger = self.logger
 
     def setUp(self):
+        self.device_dir = mkdtemp()
         self.conf = {
             'devices': '/devices',
             'items_chunk': 1000,
@@ -66,6 +67,7 @@ class TestContainerCrawler(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.conf['status_dir'])
+        shutil.rmtree(self.device_dir)
         for call in self.logger.error.mock_calls:
             print 'Uncaught error: {}'.format(call)
         for call in self.logger.warn.mock_calls:
@@ -99,7 +101,7 @@ class TestContainerCrawler(unittest.TestCase):
         for nodes in range(1, 7):
             for node_id in range(0, nodes):
                 all_nodes = [
-                    {'ip': '1.2.3.4', 'port': 1234, 'device': '/dev/sda'}
+                    {'ip': '1.2.3.4', 'port': 1234, 'device': self.device_dir}
                     for _ in range(nodes)]
                 all_nodes[node_id]['ip'] = '127.0.0.1'
 
@@ -229,7 +231,9 @@ class TestContainerCrawler(unittest.TestCase):
         error = RuntimeError('oops')
 
         for node_id in (0, 1):
-            all_nodes = [{'ip': '1.2.3.4', 'port': 1234, 'device': '/dev/sda'}
+            all_nodes = [{'ip': '1.2.3.4',
+                          'port': 1234,
+                          'device': self.device_dir}
                          for _ in range(2)]
             all_nodes[node_id]['ip'] = '127.0.0.1'
 
@@ -273,7 +277,9 @@ class TestContainerCrawler(unittest.TestCase):
                     raise error
                 return
 
-            all_nodes = [{'ip': '1.2.3.4', 'port': 1234, 'device': '/dev/sda'}
+            all_nodes = [{'ip': '1.2.3.4',
+                          'port': 1234,
+                          'device': self.device_dir}
                          for _ in range(2)]
             all_nodes[node_id]['ip'] = '127.0.0.1'
 
@@ -583,10 +589,10 @@ class TestContainerCrawler(unittest.TestCase):
             'deadbeef',
             [{'ip': '1.2.3.4',
               'port': 1234,
-              'device': '/dev/sda'},
+              'device': self.device_dir},
              {'ip': '127.0.0.1',
               'port': 1234,
-              'device': '/dev/sda'}])
+              'device': self.device_dir}])
         rows = [{'ROWID': i,
                  'name': 'obj%d' % i,
                  'created_at': Timestamp(time.time())}
@@ -760,7 +766,9 @@ class TestContainerCrawler(unittest.TestCase):
         broker.is_deleted.return_value = True
         broker_mock.return_value = broker
 
-        fake_node = {'ip': '127.0.0.1', 'port': 1337, 'device': '/dev/sda'}
+        fake_node = {'ip': '127.0.0.1',
+                     'port': 1337,
+                     'device': self.device_dir}
         part = 'deadbeef'
         self.mock_ring.get_nodes.return_value = (part, [fake_node])
         self.crawler.conf['containers'] = [
@@ -776,8 +784,8 @@ class TestContainerCrawler(unittest.TestCase):
         self.mock_handler.save_last_row.assert_not_called()
 
     def test_processed_before_verification(self):
-        nodes = [{'ip': '1.2.3.4', 'port': 1234, 'device': '/dev/sda'},
-                 {'ip': '127.0.0.1', 'port': 1234, 'device': '/dev/sda'}]
+        nodes = [{'ip': '1.2.3.4', 'port': 1234, 'device': self.device_dir},
+                 {'ip': '127.0.0.1', 'port': 1234, 'device': self.device_dir}]
         rows = [{'ROWID': i, 'name': 'obj%d' % i, 'created_at': 0}
                 for i in range(90, 100)]
 
